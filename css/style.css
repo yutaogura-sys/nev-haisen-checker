@@ -1268,3 +1268,81 @@ details[open] > .guide-toggle::before {
   cursor: help;
   margin-left: 2px;
 }
+
+/* ─── 旗上げ整合チェック ─────────────────────── */
+.annotations-section {
+  margin: 24px 0;
+  padding: 20px;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-lg);
+}
+
+.anno-group {
+  margin-bottom: 16px;
+  background: #fff;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.anno-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--gray-100);
+  border-bottom: 1px solid var(--gray-200);
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.anno-type {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--gray-800);
+}
+
+.anno-sum {
+  font-size: 13px;
+  color: var(--gray-600);
+}
+
+.anno-sum.diff {
+  color: var(--danger);
+}
+
+.anno-sum.match {
+  color: var(--success);
+}
+
+.diff-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+}
+
+.match-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+
+.anno-table {
+  margin: 0;
+}
+
+.anno-table td, .anno-table th {
+  padding: 5px 8px;
+  font-size: 12px;
+}

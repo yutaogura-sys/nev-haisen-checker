@@ -57,6 +57,8 @@ document.addEventListener('DOMContentLoaded', () => {
     tableConduitTotals:$('tableConduitTotals'),
     countedWireTotals: $('countedWireTotals'),
     countedConduitTotals:$('countedConduitTotals'),
+    // 旗上げ
+    annotationsContent:$('annotationsContent'),
     // その他
     aiComment:         $('aiComment'),
     exportBtn:         $('exportBtn'),
@@ -363,6 +365,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCountedWireTotals(els.countedWireTotals, result.countedWireTotals, result.tableWireTotals);
     renderCountedConduitTotals(els.countedConduitTotals, result.countedConduitTotals, result.tableConduitTotals);
 
+    // 旗上げ整合チェック
+    renderAnnotationsCheck(result.flaggedAnnotations, result.tableWireTotals, result.tableConduitTotals);
+
     // NeV判定
     renderOverallBadge(els.nevOverallResult, result.nev);
     renderCategoryResults(els.nevCategories, result.nev, 'nev');
@@ -542,6 +547,126 @@ document.addEventListener('DOMContentLoaded', () => {
 
     html += '</tbody></table>';
     el.innerHTML = html;
+  }
+
+  // ─── 旗上げ整合チェック描画 ─────────────────────
+  function renderAnnotationsCheck(annotations, tableWire, tableConduit) {
+    if (!annotations || annotations.length === 0) {
+      els.annotationsContent.innerHTML = '<p class="totals-empty">旗上げデータを読み取れませんでした</p>';
+      return;
+    }
+
+    // 統括表のMapを作成
+    const tableWireMap = {};
+    if (tableWire) tableWire.forEach(t => { tableWireMap[t.type] = t.total_length_m; });
+    const tableConduitMap = {};
+    if (tableConduit) tableConduit.forEach(t => { tableConduitMap[t.type] = t.total_length_m; });
+
+    // 旗上げをケーブル種別でグループ化
+    const cableGroups = {};
+    const conduitGroups = {};
+    annotations.forEach(a => {
+      // ケーブル
+      if (a.cable_type) {
+        if (!cableGroups[a.cable_type]) cableGroups[a.cable_type] = [];
+        cableGroups[a.cable_type].push(a);
+      }
+      // 配管
+      if (a.conduit_type) {
+        if (!conduitGroups[a.conduit_type]) conduitGroups[a.conduit_type] = [];
+        conduitGroups[a.conduit_type].push(a);
+      }
+    });
+
+    let html = '';
+
+    // ケーブル別の旗上げ詳細
+    const cableKeys = Object.keys(cableGroups);
+    if (cableKeys.length > 0) {
+      html += '<h4 class="totals-group-title" style="margin-top:12px;">&#128268; 配線（ケーブル）別 旗上げ一覧</h4>';
+      cableKeys.forEach(cableType => {
+        const items = cableGroups[cableType];
+        const sum = items.reduce((s, a) => s + (a.length_m || 0), 0);
+        const roundedSum = Math.round(sum * 10) / 10;
+        const tableVal = tableWireMap[cableType];
+        const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== roundedSum;
+
+        html += `<div class="anno-group">`;
+        html += `<div class="anno-group-header">`;
+        html += `<span class="anno-type">${escapeHtml(cableType)}</span>`;
+        html += `<span class="anno-sum ${hasDiff ? 'diff' : 'match'}">`;
+        html += `旗上げ合計: <strong>${roundedSum}m</strong>`;
+        if (tableVal !== undefined && tableVal !== null) {
+          html += ` / 統括表: <strong>${tableVal}m</strong>`;
+          if (hasDiff) {
+            const diff = Math.round((roundedSum - tableVal) * 10) / 10;
+            html += ` <span class="diff-badge">差異 ${diff > 0 ? '+' : ''}${diff}m</span>`;
+          } else {
+            html += ` <span class="match-badge">一致</span>`;
+          }
+        }
+        html += `</span></div>`;
+
+        html += '<table class="totals-table anno-table"><thead><tr>';
+        html += '<th>#</th><th>施工方法</th><th>距離</th><th>配管</th><th>補足</th>';
+        html += '</tr></thead><tbody>';
+        items.forEach((a, i) => {
+          html += `<tr>`;
+          html += `<td style="color:var(--gray-400);width:30px;">${i + 1}</td>`;
+          html += `<td>${escapeHtml(a.method || '-')}</td>`;
+          html += `<td class="num-cell"><strong>${a.length_m}m</strong></td>`;
+          html += `<td>${escapeHtml(a.conduit_type || '-')}</td>`;
+          html += `<td style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.note || '')}</td>`;
+          html += `</tr>`;
+        });
+        html += '</tbody></table></div>';
+      });
+    }
+
+    // 配管別の旗上げ詳細
+    const conduitKeys = Object.keys(conduitGroups);
+    if (conduitKeys.length > 0) {
+      html += '<h4 class="totals-group-title" style="margin-top:20px;">&#128295; 配管別 旗上げ一覧</h4>';
+      conduitKeys.forEach(conduitType => {
+        const items = conduitGroups[conduitType];
+        const sum = items.reduce((s, a) => s + (a.length_m || 0), 0);
+        const roundedSum = Math.round(sum * 10) / 10;
+        const tableVal = tableConduitMap[conduitType];
+        const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== roundedSum;
+
+        html += `<div class="anno-group">`;
+        html += `<div class="anno-group-header">`;
+        html += `<span class="anno-type">${escapeHtml(conduitType)}</span>`;
+        html += `<span class="anno-sum ${hasDiff ? 'diff' : 'match'}">`;
+        html += `旗上げ合計: <strong>${roundedSum}m</strong>`;
+        if (tableVal !== undefined && tableVal !== null) {
+          html += ` / 統括表: <strong>${tableVal}m</strong>`;
+          if (hasDiff) {
+            const diff = Math.round((roundedSum - tableVal) * 10) / 10;
+            html += ` <span class="diff-badge">差異 ${diff > 0 ? '+' : ''}${diff}m</span>`;
+          } else {
+            html += ` <span class="match-badge">一致</span>`;
+          }
+        }
+        html += `</span></div>`;
+
+        html += '<table class="totals-table anno-table"><thead><tr>';
+        html += '<th>#</th><th>施工方法</th><th>距離</th><th>ケーブル</th><th>補足</th>';
+        html += '</tr></thead><tbody>';
+        items.forEach((a, i) => {
+          html += `<tr>`;
+          html += `<td style="color:var(--gray-400);width:30px;">${i + 1}</td>`;
+          html += `<td>${escapeHtml(a.method || '-')}</td>`;
+          html += `<td class="num-cell"><strong>${a.length_m}m</strong></td>`;
+          html += `<td>${escapeHtml(a.cable_type || '-')}</td>`;
+          html += `<td style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.note || '')}</td>`;
+          html += `</tr>`;
+        });
+        html += '</tbody></table></div>';
+      });
+    }
+
+    els.annotationsContent.innerHTML = html;
   }
 
   // ─── 読み取り情報 ─────────────────────────────
