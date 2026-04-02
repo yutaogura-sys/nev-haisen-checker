@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeV 配線ルート図 要件判定チェックツール</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- ヘッダー -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-logo">
+        <span class="logo-icon">&#128268;</span>
+        <h1>NeV 配線ルート図<span class="header-subtitle">要件判定チェックツール</span></h1>
+      </div>
+      <div class="header-badge">EV充電設備 補助金申請</div>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- ステップ1: API キー設定 -->
+    <section class="card card-apikey" id="apiKeySection">
+      <div class="card-header">
+        <span class="step-number">1</span>
+        <h2>Gemini API キーの設定</h2>
+      </div>
+      <div class="card-body">
+        <p class="card-description">
+          図面の読み取りに Google の AI「Gemini」を使います。はじめに API キーが必要です。
+        </p>
+        <div class="apikey-guide">
+          <details>
+            <summary class="guide-toggle">API キーの取り方（かんたん3ステップ）</summary>
+            <ol class="guide-steps">
+              <li><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> を開いて、Google アカウントでログインします</li>
+              <li>画面の「APIキーを作成」ボタンをクリックします</li>
+              <li>表示されたキー（長い英数字の文字列）をコピーして、下の入力欄に貼り付けます</li>
+            </ol>
+            <p class="guide-note">※ 無料で使えます。Google アカウントがあれば誰でも取得できます。</p>
+          </details>
+        </div>
+        <div class="input-group">
+          <input type="password" id="apiKeyInput" class="input-field" placeholder="Gemini API キーを入力">
+          <button id="toggleApiKey" class="btn-icon" title="表示切替">
+            <span class="eye-icon">&#128065;</span>
+          </button>
+        </div>
+        <div class="model-selector">
+          <label class="model-label">モデル選択:</label>
+          <div class="model-options" id="modelOptions">
+            <label class="model-option">
+              <input type="radio" name="geminiModel" value="gemini-2.5-pro">
+              <div class="model-card">
+                <span class="model-name">Gemini 2.5 Pro</span>
+                <span class="model-tag tag-paid">有料</span>
+                <span class="model-desc">最高精度・複雑な図面向け</span>
+                <span class="model-status" id="status-gemini-2.5-pro"></span>
+              </div>
+            </label>
+            <label class="model-option">
+              <input type="radio" name="geminiModel" value="gemini-2.5-flash" checked>
+              <div class="model-card">
+                <span class="model-name">Gemini 2.5 Flash</span>
+                <span class="model-tag tag-free">無料枠あり</span>
+                <span class="model-desc">高速・高精度（推奨）</span>
+                <span class="model-status" id="status-gemini-2.5-flash"></span>
+              </div>
+            </label>
+            <label class="model-option">
+              <input type="radio" name="geminiModel" value="gemini-2.0-flash">
+              <div class="model-card">
+                <span class="model-name">Gemini 2.0 Flash</span>
+                <span class="model-tag tag-free">無料枠あり</span>
+                <span class="model-desc">軽量・高速処理</span>
+                <span class="model-status" id="status-gemini-2.0-flash"></span>
+              </div>
+            </label>
+          </div>
+        </div>
+        <div class="apikey-actions">
+          <label class="checkbox-label">
+            <input type="checkbox" id="saveApiKey">
+            <span class="checkbox-custom"></span>
+            このブラウザに保存する
+          </label>
+          <button id="verifyApiKey" class="btn btn-secondary btn-sm">接続テスト</button>
+          <span id="apiKeyStatus" class="status-badge"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ステップ2: 図面タイプ選択 -->
+    <section class="card card-type" id="typeSection">
+      <div class="card-header">
+        <span class="step-number">2</span>
+        <h2>図面タイプの選択</h2>
+      </div>
+      <div class="card-body">
+        <p class="card-description">チェック対象の図面タイプを選択してください。タイプにより判定項目が異なります。</p>
+        <div class="type-selector">
+          <button class="type-btn" id="btnKiso" data-type="kiso">
+            <div class="type-icon">&#127970;</div>
+            <div class="type-label">基礎充電</div>
+            <div class="type-desc">マンション・団地・集合住宅</div>
+            <ul class="type-features">
+              <li>配線ルート・電線種類の確認</li>
+              <li>配線方法・配管仕様の確認</li>
+              <li>配線全長・内訳の確認</li>
+              <li>電源元・設備配置の確認</li>
+            </ul>
+          </button>
+          <button class="type-btn" id="btnMokutekichi" data-type="mokutekichi">
+            <div class="type-icon">&#127978;</div>
+            <div class="type-label">目的地充電</div>
+            <div class="type-desc">商業施設・ホテル・ゴルフ場等</div>
+            <ul class="type-features">
+              <li>配線ルート・電線種類の確認</li>
+              <li>配線方法・配管仕様の確認</li>
+              <li>新設/既設の区別確認</li>
+              <li>付帯設備（PB・量計等）の確認</li>
+            </ul>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ステップ3: ファイルアップロード -->
+    <section class="card card-upload" id="uploadSection">
+      <div class="card-header">
+        <span class="step-number">3</span>
+        <h2>図面ファイルのアップロード</h2>
+      </div>
+      <div class="card-body">
+        <div class="upload-area" id="uploadArea">
+          <div class="upload-icon">&#128196;</div>
+          <p class="upload-text">PDF ファイルをドラッグ＆ドロップ</p>
+          <p class="upload-subtext">または</p>
+          <label class="btn btn-primary upload-btn">
+            ファイルを選択
+            <input type="file" id="fileInput" accept=".pdf" hidden>
+          </label>
+          <p class="upload-note">対応形式: PDF（最大20MB）</p>
+        </div>
+        <div class="file-info" id="fileInfo" style="display:none;">
+          <div class="file-info-inner">
+            <span class="file-icon">&#128196;</span>
+            <div class="file-details">
+              <span class="file-name" id="fileName"></span>
+              <span class="file-size" id="fileSize"></span>
+            </div>
+            <button class="btn-icon btn-remove" id="removeFile" title="削除">&#10005;</button>
+          </div>
+          <div class="preview-container" id="previewContainer"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ステップ4: チェック実行 -->
+    <section class="card card-check" id="checkSection">
+      <div class="card-body center">
+        <button class="btn btn-primary btn-large" id="checkBtn" disabled>
+          <span class="btn-icon-left">&#128268;</span>
+          要件チェックを実行
+        </button>
+        <p class="check-note" id="checkNote">API キーの設定、図面タイプの選択、ファイルのアップロードを完了してください</p>
+      </div>
+    </section>
+
+    <!-- ローディング -->
+    <section class="card card-loading" id="loadingSection" style="display:none;">
+      <div class="card-body center">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Gemini で配線ルート図を解析中...</p>
+        <p class="loading-subtext">高精度な読み取りを実行しています（30秒〜1分程度）</p>
+      </div>
+    </section>
+
+    <!-- ステップ5: 結果表示 -->
+    <section class="card card-result" id="resultSection" style="display:none;">
+      <div class="card-header result-header">
+        <h2>判定結果</h2>
+        <div class="result-summary" id="resultSummary"></div>
+      </div>
+      <div class="card-body">
+        <!-- 総合判定 -->
+        <div class="overall-result" id="overallResult"></div>
+
+        <!-- 読み取り情報サマリー -->
+        <div class="detected-info-section" id="detectedInfoSection">
+          <h3>&#128270; 読み取り情報サマリー</h3>
+          <div class="detected-info" id="detectedInfo"></div>
+        </div>
+
+        <!-- カテゴリ別結果 -->
+        <div class="result-categories" id="resultCategories"></div>
+
+        <!-- AIコメント -->
+        <div class="ai-comment-section" id="aiCommentSection">
+          <h3>&#129302; AI 総合コメント</h3>
+          <div class="ai-comment" id="aiComment"></div>
+        </div>
+
+        <!-- アクション -->
+        <div class="result-actions">
+          <button class="btn btn-secondary" id="exportBtn">&#128196; 結果をコピー</button>
+          <button class="btn btn-primary" id="recheckBtn">&#128260; 別の図面をチェック</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- フッター -->
+  <footer class="footer">
+    <p>NeV 配線ルート図 要件判定チェックツール &copy; 2026</p>
+    <p class="footer-note">本ツールはAI判定のため、最終確認は目視でお願いします。</p>
+  </footer>
+
+  <!-- PDF.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  </script>
+  <script src="js/checker.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
