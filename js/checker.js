@@ -227,16 +227,27 @@ ${nevCheckListText}
 ### マニュアルチェック項目
 ${manualCheckListText}
 
-## 【Part 3】配線・配管 種別ごとの合計値算出
+## 【Part 3】配線・配管 種別ごとの合計値算出（2つのソースから）
 
-図面から読み取れる全ての配線（ケーブル）と配管について、種別ごとの合計長さを算出してください。
-配線集計表がある場合はその数値を使用し、ない場合は各区間の注記から集計してください。
+配線と配管について、**2つのソース**からそれぞれ種別ごとの合計長さを算出してください：
 
-### 配線（ケーブル）の種別例
+### ソース1: 統括表（配線集計表）の記載値
+図面内に統括表（配線集計表）がある場合、その表に記載されている数値をそのまま読み取ってください。
+統括表がない場合は空配列 [] としてください。
+
+### ソース2: 図面上の注記から実際にカウントした合計値
+配線ルート上の各区間に記載された注記（例:「CVT22sq 露出配管 PFD-28 13m」）から、
+各区間の距離を種別ごとに合算してください。全区間を漏れなく拾ってください。
+
+### 対象の配線（ケーブル）種別例
 CVT8sq、CVT14sq、CVT22sq、CVT38sq、CVT60sq、CVT100sq、CV5.5-3C、CV5sq-3C、CV8sq-3C、CV14sq-3C、CV22sq-3C、CV38sq-3C、CV60sq-3C、CV100sq-3C、VVF2mm-2C、VVF2mm-3C、IV5.5sq 等
 
-### 配管の種別例
-PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-42、HIVE-54、FEP-30、FEP-40、FEP-50、FEP-54、VE-22、VE-28、G28、G54、E25、CD-22 等
+### 対象の配管種別例
+PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-42、HIVE-54、FEP-30、FEP-40、FEP-50、FEP-54、VE-22、VE-28、G28、G54、E25、E31、E39、CD-22 等
+
+### 重要
+- 統括表の値と注記カウント値が一致しない場合でも、それぞれの数値をそのまま報告してください
+- 差異がある場合はユーザーが確認できるよう、正確な数値を出力してください
 
 ## 回答フォーマット（厳密にこのJSON形式で返してください）
 
@@ -258,7 +269,19 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       "detail": "判定理由の詳細"
     }
   ],
-  "wire_totals": [
+  "table_wire_totals": [
+    {
+      "type": "ケーブル種別（例: CVT22sq）",
+      "total_length_m": 数値
+    }
+  ],
+  "table_conduit_totals": [
+    {
+      "type": "配管種別（例: PFD-28）",
+      "total_length_m": 数値
+    }
+  ],
+  "counted_wire_totals": [
     {
       "type": "ケーブル種別（例: CVT22sq）",
       "total_length_m": 数値,
@@ -270,7 +293,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       }
     }
   ],
-  "conduit_totals": [
+  "counted_conduit_totals": [
     {
       "type": "配管種別（例: PFD-28）",
       "total_length_m": 数値,
@@ -310,7 +333,8 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 - 複数ページがある場合は全ページを確認してください
 - 「該当する場合のみ」の項目は、該当しない場合は **pass** としてください
 - found_text には図面から読み取れた具体的なテキスト・数値を記載（推測不可）
-- wire_totals / conduit_totals は図面から読み取れた数値のみ記載。読み取れない場合は空配列 []
+- table_wire_totals / table_conduit_totals は統括表の記載値。統括表がない場合は空配列 []
+- counted_wire_totals / counted_conduit_totals は図面注記から実際にカウントした合計値。読み取れない場合は空配列 []
 - 全てのチェック項目について必ず結果を返してください（スキップ不可）`;
   }
 
@@ -611,8 +635,10 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     return {
       nev,
       manual,
-      wireTotals: geminiResult.wire_totals || [],
-      conduitTotals: geminiResult.conduit_totals || [],
+      tableWireTotals: geminiResult.table_wire_totals || [],
+      tableConduitTotals: geminiResult.table_conduit_totals || [],
+      countedWireTotals: geminiResult.counted_wire_totals || [],
+      countedConduitTotals: geminiResult.counted_conduit_totals || [],
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
       pageCount,
@@ -652,10 +678,20 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       text += '\n';
     });
 
-    // 配線集計
-    if (result.wireTotals && result.wireTotals.length > 0) {
-      text += `\n■ 配線（ケーブル）合計値\n`;
-      result.wireTotals.forEach(w => {
+    // 配線集計（統括表）
+    if (result.tableWireTotals && result.tableWireTotals.length > 0) {
+      text += `\n■ 統括表の記載値 — 配線\n`;
+      result.tableWireTotals.forEach(w => { text += `  ${w.type}: ${w.total_length_m}m\n`; });
+    }
+    if (result.tableConduitTotals && result.tableConduitTotals.length > 0) {
+      text += `\n■ 統括表の記載値 — 配管\n`;
+      result.tableConduitTotals.forEach(c => { text += `  ${c.type}: ${c.total_length_m}m\n`; });
+    }
+
+    // 配線集計（実カウント）
+    if (result.countedWireTotals && result.countedWireTotals.length > 0) {
+      text += `\n■ 注記カウント — 配線\n`;
+      result.countedWireTotals.forEach(w => {
         text += `  ${w.type}: ${w.total_length_m}m`;
         const bd = w.breakdown;
         if (bd) {
@@ -669,10 +705,9 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
         text += '\n';
       });
     }
-
-    if (result.conduitTotals && result.conduitTotals.length > 0) {
-      text += `\n■ 配管合計値\n`;
-      result.conduitTotals.forEach(c => {
+    if (result.countedConduitTotals && result.countedConduitTotals.length > 0) {
+      text += `\n■ 注記カウント — 配管\n`;
+      result.countedConduitTotals.forEach(c => {
         text += `  ${c.type}: ${c.total_length_m}m`;
         if (c.method) text += ` [${c.method}]`;
         text += '\n';

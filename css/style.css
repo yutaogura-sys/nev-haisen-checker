@@ -1211,3 +1211,60 @@ details[open] > .guide-toggle::before {
   text-align: center;
   padding: 16px 0;
 }
+
+.totals-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--gray-800);
+  margin-bottom: 4px;
+}
+
+.totals-section-desc {
+  font-size: 12px;
+  color: var(--gray-500);
+  margin-bottom: 16px;
+}
+
+.totals-group {
+  margin-bottom: 20px;
+}
+
+.totals-group-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gray-700);
+  margin-bottom: 8px;
+}
+
+.totals-card-header {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  letter-spacing: 0.03em;
+}
+
+.totals-card-header.table-source {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.totals-card-header.count-source {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+/* 差異ハイライト */
+.diff-cell {
+  background: #fef2f2 !important;
+  color: var(--danger) !important;
+}
+
+.diff-marker {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--danger);
+  cursor: help;
+  margin-left: 2px;
+}

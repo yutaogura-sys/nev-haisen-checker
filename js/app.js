@@ -52,9 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
     tabManualBadge:    $('tabManualBadge'),
     nevContent:        $('nevContent'),
     manualContent:     $('manualContent'),
-    // 集計
-    wireTotalsTable:   $('wireTotalsTable'),
-    conduitTotalsTable:$('conduitTotalsTable'),
+    // 集計（4テーブル: 統括表×2 + 実カウント×2）
+    tableWireTotals:   $('tableWireTotals'),
+    tableConduitTotals:$('tableConduitTotals'),
+    countedWireTotals: $('countedWireTotals'),
+    countedConduitTotals:$('countedConduitTotals'),
     // その他
     aiComment:         $('aiComment'),
     exportBtn:         $('exportBtn'),
@@ -355,9 +357,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // 読み取り情報
     renderDetectedInfo(result.detectedInfo);
 
-    // 配線・配管集計
-    renderWireTotals(result.wireTotals);
-    renderConduitTotals(result.conduitTotals);
+    // 配線・配管集計（統括表 vs 実カウント）
+    renderSimpleTotals(els.tableWireTotals, result.tableWireTotals, 'wire');
+    renderSimpleTotals(els.tableConduitTotals, result.tableConduitTotals, 'conduit');
+    renderCountedWireTotals(els.countedWireTotals, result.countedWireTotals, result.tableWireTotals);
+    renderCountedConduitTotals(els.countedConduitTotals, result.countedConduitTotals, result.tableConduitTotals);
 
     // NeV判定
     renderOverallBadge(els.nevOverallResult, result.nev);
@@ -448,22 +452,56 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ─── 配線集計テーブル描画 ─────────────────────
-  function renderWireTotals(wireTotals) {
-    if (!wireTotals || wireTotals.length === 0) {
-      els.wireTotalsTable.innerHTML = '<p class="totals-empty">配線データを読み取れませんでした</p>';
+  // ─── 配線・配管集計テーブル描画 ─────────────────
+
+  function formatNum(val) {
+    if (val === undefined || val === null || val === 0 || val === '') return '-';
+    return val + 'm';
+  }
+
+  // 統括表の記載値（シンプルテーブル）
+  function renderSimpleTotals(el, data, kind) {
+    if (!data || data.length === 0) {
+      el.innerHTML = '<p class="totals-empty">統括表に記載なし / 読み取れませんでした</p>';
+      return;
+    }
+    const label = kind === 'wire' ? '種別' : '種別';
+    let html = '<table class="totals-table"><thead><tr>';
+    html += `<th>${label}</th><th>合計</th>`;
+    html += '</tr></thead><tbody>';
+    data.forEach(item => {
+      html += `<tr><td class="type-cell">${escapeHtml(item.type)}</td>`;
+      html += `<td class="num-cell"><strong>${formatNum(item.total_length_m)}</strong></td></tr>`;
+    });
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  }
+
+  // 注記カウント値（配線、差異ハイライト付き）
+  function renderCountedWireTotals(el, countedData, tableData) {
+    if (!countedData || countedData.length === 0) {
+      el.innerHTML = '<p class="totals-empty">注記から配線データを読み取れませんでした</p>';
       return;
     }
 
+    // 統括表の値をMapに変換（差異検出用）
+    const tableMap = {};
+    if (tableData) tableData.forEach(t => { tableMap[t.type] = t.total_length_m; });
+
     let html = '<table class="totals-table"><thead><tr>';
-    html += '<th>ケーブル種別</th><th>合計</th><th>露出</th><th>管内</th><th>埋設</th><th>架空</th>';
+    html += '<th>種別</th><th>合計</th><th>露出</th><th>管内</th><th>埋設</th><th>架空</th>';
     html += '</tr></thead><tbody>';
 
-    wireTotals.forEach(w => {
+    countedData.forEach(w => {
       const bd = w.breakdown || {};
+      const tableVal = tableMap[w.type];
+      const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== w.total_length_m;
+      const diffClass = hasDiff ? ' class="diff-cell"' : '';
+      const diffNote = hasDiff ? ` <span class="diff-marker" title="統括表: ${tableVal}m">(!)</span>` : '';
+
       html += '<tr>';
       html += `<td class="type-cell">${escapeHtml(w.type)}</td>`;
-      html += `<td class="num-cell"><strong>${formatNum(w.total_length_m)}</strong></td>`;
+      html += `<td class="num-cell"${diffClass}><strong>${formatNum(w.total_length_m)}</strong>${diffNote}</td>`;
       html += `<td class="num-cell">${formatNum(bd.exposed_m)}</td>`;
       html += `<td class="num-cell">${formatNum(bd.in_conduit_m)}</td>`;
       html += `<td class="num-cell">${formatNum(bd.buried_m)}</td>`;
@@ -472,34 +510,38 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     html += '</tbody></table>';
-    els.wireTotalsTable.innerHTML = html;
+    el.innerHTML = html;
   }
 
-  function renderConduitTotals(conduitTotals) {
-    if (!conduitTotals || conduitTotals.length === 0) {
-      els.conduitTotalsTable.innerHTML = '<p class="totals-empty">配管データを読み取れませんでした</p>';
+  // 注記カウント値（配管、差異ハイライト付き）
+  function renderCountedConduitTotals(el, countedData, tableData) {
+    if (!countedData || countedData.length === 0) {
+      el.innerHTML = '<p class="totals-empty">注記から配管データを読み取れませんでした</p>';
       return;
     }
 
+    const tableMap = {};
+    if (tableData) tableData.forEach(t => { tableMap[t.type] = t.total_length_m; });
+
     let html = '<table class="totals-table"><thead><tr>';
-    html += '<th>配管種別</th><th>合計</th><th>配線方法</th>';
+    html += '<th>種別</th><th>合計</th><th>配線方法</th>';
     html += '</tr></thead><tbody>';
 
-    conduitTotals.forEach(c => {
+    countedData.forEach(c => {
+      const tableVal = tableMap[c.type];
+      const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== c.total_length_m;
+      const diffClass = hasDiff ? ' class="diff-cell"' : '';
+      const diffNote = hasDiff ? ` <span class="diff-marker" title="統括表: ${tableVal}m">(!)</span>` : '';
+
       html += '<tr>';
       html += `<td class="type-cell">${escapeHtml(c.type)}</td>`;
-      html += `<td class="num-cell"><strong>${formatNum(c.total_length_m)}</strong></td>`;
+      html += `<td class="num-cell"${diffClass}><strong>${formatNum(c.total_length_m)}</strong>${diffNote}</td>`;
       html += `<td>${escapeHtml(c.method || '-')}</td>`;
       html += '</tr>';
     });
 
     html += '</tbody></table>';
-    els.conduitTotalsTable.innerHTML = html;
-  }
-
-  function formatNum(val) {
-    if (val === undefined || val === null || val === 0 || val === '') return '-';
-    return val + 'm';
+    el.innerHTML = html;
   }
 
   // ─── 読み取り情報 ─────────────────────────────

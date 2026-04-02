@@ -192,19 +192,35 @@
           <div class="detected-info" id="detectedInfo"></div>
         </div>
 
-        <!-- 配線・配管 合計値 -->
+        <!-- 配線・配管 合計値（統括表 vs 実カウント） -->
         <div class="totals-section" id="totalsSection">
-          <div class="totals-grid">
-            <div class="totals-card">
-              <h3>&#128268; 配線（ケーブル）合計値</h3>
-              <div class="totals-table-wrap" id="wireTotalsTable">
-                <p class="totals-empty">チェック実行後に表示されます</p>
+          <h3 class="totals-section-title">&#128202; 配線・配管 集計</h3>
+          <p class="totals-section-desc">統括表の記載値と、図面注記から実際にカウントした値を比較できます。差異がある箇所は赤で表示されます。</p>
+
+          <div class="totals-group">
+            <h4 class="totals-group-title">&#128268; 配線（ケーブル）</h4>
+            <div class="totals-grid">
+              <div class="totals-card">
+                <div class="totals-card-header table-source">統括表の記載値</div>
+                <div class="totals-table-wrap" id="tableWireTotals"></div>
+              </div>
+              <div class="totals-card">
+                <div class="totals-card-header count-source">注記からの実カウント</div>
+                <div class="totals-table-wrap" id="countedWireTotals"></div>
               </div>
             </div>
-            <div class="totals-card">
-              <h3>&#128295; 配管 合計値</h3>
-              <div class="totals-table-wrap" id="conduitTotalsTable">
-                <p class="totals-empty">チェック実行後に表示されます</p>
+          </div>
+
+          <div class="totals-group">
+            <h4 class="totals-group-title">&#128295; 配管</h4>
+            <div class="totals-grid">
+              <div class="totals-card">
+                <div class="totals-card-header table-source">統括表の記載値</div>
+                <div class="totals-table-wrap" id="tableConduitTotals"></div>
+              </div>
+              <div class="totals-card">
+                <div class="totals-card-header count-source">注記からの実カウント</div>
+                <div class="totals-table-wrap" id="countedConduitTotals"></div>
               </div>
             </div>
           </div>
