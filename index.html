@@ -185,8 +185,6 @@
         <div class="result-summary" id="resultSummary"></div>
       </div>
       <div class="card-body">
-        <!-- 総合判定 -->
-        <div class="overall-result" id="overallResult"></div>
 
         <!-- 読み取り情報サマリー -->
         <div class="detected-info-section" id="detectedInfoSection">
@@ -194,8 +192,49 @@
           <div class="detected-info" id="detectedInfo"></div>
         </div>
 
-        <!-- カテゴリ別結果 -->
-        <div class="result-categories" id="resultCategories"></div>
+        <!-- 配線・配管 合計値 -->
+        <div class="totals-section" id="totalsSection">
+          <div class="totals-grid">
+            <div class="totals-card">
+              <h3>&#128268; 配線（ケーブル）合計値</h3>
+              <div class="totals-table-wrap" id="wireTotalsTable">
+                <p class="totals-empty">チェック実行後に表示されます</p>
+              </div>
+            </div>
+            <div class="totals-card">
+              <h3>&#128295; 配管 合計値</h3>
+              <div class="totals-table-wrap" id="conduitTotalsTable">
+                <p class="totals-empty">チェック実行後に表示されます</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 判定タブ切替 -->
+        <div class="result-tabs" id="resultTabs">
+          <button class="result-tab active" data-tab="nev" id="tabNev">
+            <span class="tab-icon">&#128203;</span>
+            NeV要件判定
+            <span class="tab-badge" id="tabNevBadge"></span>
+          </button>
+          <button class="result-tab" data-tab="manual" id="tabManual">
+            <span class="tab-icon">&#128214;</span>
+            作図センターマニュアル判定
+            <span class="tab-badge" id="tabManualBadge"></span>
+          </button>
+        </div>
+
+        <!-- NeV要件判定 -->
+        <div class="result-tab-content active" id="nevContent">
+          <div class="overall-result" id="nevOverallResult"></div>
+          <div class="result-categories" id="nevCategories"></div>
+        </div>
+
+        <!-- 作図センターマニュアル判定 -->
+        <div class="result-tab-content" id="manualContent">
+          <div class="overall-result" id="manualOverallResult"></div>
+          <div class="result-categories" id="manualCategories"></div>
+        </div>
 
         <!-- AIコメント -->
         <div class="ai-comment-section" id="aiCommentSection">

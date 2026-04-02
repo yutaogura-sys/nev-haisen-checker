@@ -1,6 +1,7 @@
 /* ============================================================
    app.js — メインアプリケーションロジック
    NeV 配線ルート図 要件判定チェックツール
+   機能: NeV要件判定 / 作図センターマニュアル判定 / 配線・配管集計
    ============================================================ */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -10,7 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     apiKey: '',
     apiKeyVerified: false,
     selectedModel: 'gemini-2.5-flash',
-    selectedType: null, // 'kiso' | 'mokutekichi'
+    selectedType: null,
     file: null,
   };
 
@@ -37,9 +38,24 @@ document.addEventListener('DOMContentLoaded', () => {
     loadingSection:    $('loadingSection'),
     resultSection:     $('resultSection'),
     resultSummary:     $('resultSummary'),
-    overallResult:     $('overallResult'),
     detectedInfo:      $('detectedInfo'),
-    resultCategories:  $('resultCategories'),
+    // NeV判定
+    nevOverallResult:  $('nevOverallResult'),
+    nevCategories:     $('nevCategories'),
+    // マニュアル判定
+    manualOverallResult: $('manualOverallResult'),
+    manualCategories:  $('manualCategories'),
+    // タブ
+    tabNev:            $('tabNev'),
+    tabManual:         $('tabManual'),
+    tabNevBadge:       $('tabNevBadge'),
+    tabManualBadge:    $('tabManualBadge'),
+    nevContent:        $('nevContent'),
+    manualContent:     $('manualContent'),
+    // 集計
+    wireTotalsTable:   $('wireTotalsTable'),
+    conduitTotalsTable:$('conduitTotalsTable'),
+    // その他
     aiComment:         $('aiComment'),
     exportBtn:         $('exportBtn'),
     recheckBtn:        $('recheckBtn'),
@@ -107,6 +123,10 @@ document.addEventListener('DOMContentLoaded', () => {
     els.checkBtn.addEventListener('click', runCheck);
     els.exportBtn.addEventListener('click', exportResult);
     els.recheckBtn.addEventListener('click', resetForRecheck);
+
+    // タブ切替
+    els.tabNev.addEventListener('click', () => switchTab('nev'));
+    els.tabManual.addEventListener('click', () => switchTab('manual'));
   }
 
   // ─── API キー ─────────────────────────────────
@@ -280,6 +300,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // ─── タブ切替 ─────────────────────────────────
+  function switchTab(tab) {
+    els.tabNev.classList.toggle('active', tab === 'nev');
+    els.tabManual.classList.toggle('active', tab === 'manual');
+    els.nevContent.classList.toggle('active', tab === 'nev');
+    els.manualContent.classList.toggle('active', tab === 'manual');
+  }
+
   // ─── チェック実行 ─────────────────────────────
   let lastResult = null;
   let isChecking = false;
@@ -319,40 +347,80 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── 結果描画 ─────────────────────────────────
   function renderResult(result) {
-    const overallLabels = {
-      pass: { icon: '&#9989;', text: '合格', desc: '全ての必須要件を満たしています' },
-      warn: { icon: '&#9888;&#65039;', text: '要確認', desc: '一部の必須要件に不備の可能性があります' },
-      fail: { icon: '&#10060;', text: '不合格', desc: '複数の必須要件が満たされていません' },
-    };
-    const ov = overallLabels[result.overall];
-
-    els.overallResult.className = 'overall-result ' + result.overall;
-    els.overallResult.innerHTML = `
-      <span class="overall-icon">${ov.icon}</span>
-      <div class="overall-label">${ov.text}</div>
-      <div class="overall-score">
-        合格 ${result.totalPass} / ${result.totalItems} 項目
-        （必須: ${result.requiredPass} / ${result.requiredTotal}）
-      </div>
-      <div style="font-size:12px;color:var(--gray-500);margin-top:4px;">${ov.desc}</div>
-    `;
-
     const typeLabel = state.selectedType === 'kiso' ? '基礎充電' : '目的地充電';
     const modelInfo = DrawingChecker.MODELS.find(m => m.id === state.selectedModel);
     const modelLabel = modelInfo ? modelInfo.name : state.selectedModel;
     els.resultSummary.textContent = `${typeLabel} | ${modelLabel} | ${result.analyzedPages}\u30DA\u30FC\u30B8\u89E3\u6790`;
 
+    // 読み取り情報
     renderDetectedInfo(result.detectedInfo);
 
-    els.resultCategories.innerHTML = '';
+    // 配線・配管集計
+    renderWireTotals(result.wireTotals);
+    renderConduitTotals(result.conduitTotals);
+
+    // NeV判定
+    renderOverallBadge(els.nevOverallResult, result.nev);
+    renderCategoryResults(els.nevCategories, result.nev, 'nev');
+
+    // マニュアル判定
+    renderOverallBadge(els.manualOverallResult, result.manual);
+    renderCategoryResults(els.manualCategories, result.manual, 'manual');
+
+    // タブバッジ
+    renderTabBadge(els.tabNevBadge, result.nev);
+    renderTabBadge(els.tabManualBadge, result.manual);
+
+    // デフォルトでNeVタブを表示
+    switchTab('nev');
+
+    // AIコメント
+    els.aiComment.textContent = result.overallComment || '（コメントなし）';
+  }
+
+  function renderOverallBadge(el, data) {
+    const overallLabels = {
+      pass: { icon: '&#9989;', text: '合格', desc: '全ての必須要件を満たしています' },
+      warn: { icon: '&#9888;&#65039;', text: '要確認', desc: '一部の必須要件に不備の可能性があります' },
+      fail: { icon: '&#10060;', text: '不合格', desc: '複数の必須要件が満たされていません' },
+    };
+    const ov = overallLabels[data.overall];
+
+    el.className = 'overall-result ' + data.overall;
+    el.innerHTML = `
+      <span class="overall-icon">${ov.icon}</span>
+      <div class="overall-label">${ov.text}</div>
+      <div class="overall-score">
+        合格 ${data.totalPass} / ${data.totalItems} 項目
+        （必須: ${data.requiredPass} / ${data.requiredTotal}）
+      </div>
+      <div style="font-size:12px;color:var(--gray-500);margin-top:4px;">${ov.desc}</div>
+    `;
+  }
+
+  function renderTabBadge(el, data) {
+    if (data.overall === 'pass') {
+      el.className = 'tab-badge pass';
+      el.textContent = '合格';
+    } else if (data.overall === 'warn') {
+      el.className = 'tab-badge warn';
+      el.textContent = '要確認';
+    } else {
+      el.className = 'tab-badge fail';
+      el.textContent = `NG ${data.requiredFail}件`;
+    }
+  }
+
+  function renderCategoryResults(container, data, group) {
+    container.innerHTML = '';
     const categories = DrawingChecker.CATEGORIES;
 
-    const sortedCats = Object.keys(result.categoryResults).sort((a, b) => {
+    const sortedCats = Object.keys(data.categoryResults).sort((a, b) => {
       return (categories[a]?.order || 99) - (categories[b]?.order || 99);
     });
 
     sortedCats.forEach(catKey => {
-      const catData = result.categoryResults[catKey];
+      const catData = data.categoryResults[catKey];
       const catMeta = categories[catKey] || { title: catKey, icon: '&#128203;' };
 
       let badgeClass, badgeText;
@@ -376,12 +444,65 @@ document.addEventListener('DOMContentLoaded', () => {
           ${catData.items.map(item => renderCheckItem(item)).join('')}
         </ul>
       `;
-      els.resultCategories.appendChild(catEl);
+      container.appendChild(catEl);
     });
-
-    els.aiComment.textContent = result.overallComment || '（コメントなし）';
   }
 
+  // ─── 配線集計テーブル描画 ─────────────────────
+  function renderWireTotals(wireTotals) {
+    if (!wireTotals || wireTotals.length === 0) {
+      els.wireTotalsTable.innerHTML = '<p class="totals-empty">配線データを読み取れませんでした</p>';
+      return;
+    }
+
+    let html = '<table class="totals-table"><thead><tr>';
+    html += '<th>ケーブル種別</th><th>合計</th><th>露出</th><th>管内</th><th>埋設</th><th>架空</th>';
+    html += '</tr></thead><tbody>';
+
+    wireTotals.forEach(w => {
+      const bd = w.breakdown || {};
+      html += '<tr>';
+      html += `<td class="type-cell">${escapeHtml(w.type)}</td>`;
+      html += `<td class="num-cell"><strong>${formatNum(w.total_length_m)}</strong></td>`;
+      html += `<td class="num-cell">${formatNum(bd.exposed_m)}</td>`;
+      html += `<td class="num-cell">${formatNum(bd.in_conduit_m)}</td>`;
+      html += `<td class="num-cell">${formatNum(bd.buried_m)}</td>`;
+      html += `<td class="num-cell">${formatNum(bd.aerial_m)}</td>`;
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    els.wireTotalsTable.innerHTML = html;
+  }
+
+  function renderConduitTotals(conduitTotals) {
+    if (!conduitTotals || conduitTotals.length === 0) {
+      els.conduitTotalsTable.innerHTML = '<p class="totals-empty">配管データを読み取れませんでした</p>';
+      return;
+    }
+
+    let html = '<table class="totals-table"><thead><tr>';
+    html += '<th>配管種別</th><th>合計</th><th>配線方法</th>';
+    html += '</tr></thead><tbody>';
+
+    conduitTotals.forEach(c => {
+      html += '<tr>';
+      html += `<td class="type-cell">${escapeHtml(c.type)}</td>`;
+      html += `<td class="num-cell"><strong>${formatNum(c.total_length_m)}</strong></td>`;
+      html += `<td>${escapeHtml(c.method || '-')}</td>`;
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    els.conduitTotalsTable.innerHTML = html;
+  }
+
+  function formatNum(val) {
+    if (val === undefined || val === null || val === 0 || val === '') return '-';
+    return val + 'm';
+  }
+
+  // ─── 読み取り情報 ─────────────────────────────
   function renderDetectedInfo(info) {
     if (!info || Object.keys(info).length === 0) {
       els.detectedInfo.innerHTML = '<p style="color:var(--gray-400);font-size:13px;">読み取り情報なし</p>';

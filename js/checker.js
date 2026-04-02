@@ -1,528 +1,317 @@
 /* ============================================================
    checker.js — Gemini API を使った配線ルート図の要件チェック
    NeV補助金（次世代自動車充電インフラ整備促進事業）5-9-3 配線ルート図
-   正解事例 40件以上の分析に基づく高精度チェックロジック
+   正解事例 44件の分析に基づく高精度チェックロジック
+   機能: NeV要件判定 / 作図センターマニュアル判定 / 配線・配管集計
    ============================================================ */
 
 const DrawingChecker = (() => {
 
-  // ─── チェック項目定義 ───────────────────────────
-  // 共通チェック項目（基礎・目的地の両方に適用）
+  // ─── NeV チェック項目定義 ─────────────────────────
   const COMMON_CHECKS = [
     // ── 表題欄 ──
-    {
-      id: 'setting_place',
-      category: 'title_block',
-      label: '設置場所名称の記載',
-      description: '表題欄の「設置場所」欄に、申請で入力した設置場所名称（略称不可）が記載されているか。例）○○マンション、○○ホテル 等',
-      required: true,
-    },
-    {
-      id: 'drawing_name',
-      category: 'title_block',
-      label: '図面名称「配線ルート図」の記載',
-      description: '表題欄の「図面名称」欄に「配線ルート図」と記載されているか。複数ページの場合は「配線ルート図1」「配線ルート図2」も可。不備例：「配線図」「電気配線図」「ルート図」等は不可',
-      required: true,
-    },
-    {
-      id: 'project_name',
-      category: 'title_block',
-      label: '工事名の記載',
-      description: '表題欄に工事名が記載されているか。正解例：「充電設備設置工事」「普通充電設備設置工事」等',
-      required: true,
-    },
-    {
-      id: 'creator',
-      category: 'title_block',
-      label: '作成者の記載',
-      description: '表題欄の「作成者」欄に会社名または個人名が記載されているか',
-      required: true,
-    },
-    {
-      id: 'scale',
-      category: 'title_block',
-      label: '縮尺の記載',
-      description: '表題欄の「縮尺」欄に縮尺が記載されているか。正解例：A3:1/100、1/150 等',
-      required: true,
-    },
-    {
-      id: 'creation_date',
-      category: 'title_block',
-      label: '作成日の記載',
-      description: '表題欄の「作成日」欄に日付が記載されているか（YYYY年MM月DD日 形式等）',
-      required: true,
-    },
+    { id: 'setting_place', category: 'title_block', label: '設置場所名称の記載',
+      description: '表題欄の「設置場所」欄に、申請で入力した設置場所名称（略称不可）が記載されているか', required: true },
+    { id: 'drawing_name', category: 'title_block', label: '図面名称「配線ルート図」の記載',
+      description: '表題欄に「配線ルート図」と記載されているか。複数ページ時は「配線ルート図1」「配線ルート図2」も可。不備例：「配線図」「電気配線図」「ルート図」等は不可', required: true },
+    { id: 'project_name', category: 'title_block', label: '工事名の記載',
+      description: '表題欄に工事名が記載されているか。正解例：「充電設備設置工事」「普通充電設備設置工事」等', required: true },
+    { id: 'creator', category: 'title_block', label: '作成者の記載',
+      description: '表題欄の「作成者」欄に会社名または個人名が記載されているか', required: true },
+    { id: 'scale', category: 'title_block', label: '縮尺の記載',
+      description: '表題欄の「縮尺」欄に縮尺が記載されているか。正解例：A3:1/100、1/150 等', required: true },
+    { id: 'creation_date', category: 'title_block', label: '作成日の記載',
+      description: '表題欄に日付が記載されているか（YYYY年MM月DD日 形式等）', required: true },
 
     // ── 配線情報 ──
-    {
-      id: 'wire_type',
-      category: 'wiring_info',
-      label: '電線の種類・サイズの記載',
-      description: '使用する電線の種類とサイズが記載されているか。正解例：CV5.5-3C、CV5sq-3C、CVT100sq、CV8sq-3C 等。配線集計表または配線ルート上のどちらかに記載があればよい',
-      required: true,
-    },
-    {
-      id: 'total_length',
-      category: 'wiring_info',
-      label: '配線全長の記載',
-      description: '配線の全長が記載されているか。正解例：「CV5.5-3C 全長 20.1m」「CVT100sq 全長 38.5m」等。配線集計表に全長として記載されることが多い',
-      required: true,
-    },
-    {
-      id: 'length_breakdown',
-      category: 'wiring_info',
-      label: '配線内訳（露出/管内/埋設等）の記載',
-      description: '配線全長の内訳が配線方法別に記載されているか。正解例：「内訳 露出 10.7m」「管内 金属製 E25 4.4m」「合成樹脂 埋設 FEP30 2.0m」等',
-      required: true,
-    },
-    {
-      id: 'section_details',
-      category: 'wiring_info',
-      label: '各区間の配線詳細の記載',
-      description: '配線ルート上の各区間ごとに、電線種類・配管種類・距離が記載されているか。正解例：「CV5sq-3C 露出配管 PF5-28 Xxm」「CV5sq-3C 埋設配管 FEP-30 xxm」等',
-      required: true,
-    },
+    { id: 'wire_type', category: 'wiring_info', label: '電線の種類・サイズの記載',
+      description: '使用する電線の種類とサイズが記載されているか。正解例：CV5.5-3C、CV5sq-3C、CVT100sq 等', required: true },
+    { id: 'total_length', category: 'wiring_info', label: '配線全長の記載',
+      description: '配線の全長が記載されているか。配線集計表に全長として記載されることが多い', required: true },
+    { id: 'length_breakdown', category: 'wiring_info', label: '配線内訳（露出/管内/埋設等）の記載',
+      description: '配線全長の内訳が配線方法別に記載されているか。正解例：「内訳 露出 10.7m」「管内 金属製 E25 4.4m」「合成樹脂 埋設 FEP30 2.0m」等', required: true },
+    { id: 'section_details', category: 'wiring_info', label: '各区間の配線詳細の記載',
+      description: '配線ルート上の各区間ごとに、電線種類・配管種類・距離が記載されているか', required: true },
 
     // ── 配線方法・配管 ──
-    {
-      id: 'wiring_method',
-      category: 'wiring_method',
-      label: '配線方法（架空/露出/埋設）の記載',
-      description: '各区間の配線方法が明確に記載されているか。正解例：架空（空中配線）、露出（壁面・天井沿い）、埋設（地中）の区別。配線集計表の内訳欄または図面上の各区間注記で確認',
-      required: true,
-    },
-    {
-      id: 'conduit_spec',
-      category: 'wiring_method',
-      label: '配管の種類・サイズの記載',
-      description: '使用する配管の種類とサイズが記載されているか。正解例：PF5-28、VE-22、FEP-30、G28、G54、E25、HIVE-22、CD-22 等',
-      required: true,
-    },
-    {
-      id: 'conduit_material',
-      category: 'wiring_method',
-      label: '配管材質の記載（金属製/合成樹脂）',
-      description: '配管の材質区分が記載されているか。正解例：「金属製 G28」「合成樹脂 FEP30」「金属管配管 E25」等。配線集計表の「管内」欄で金属製/合成樹脂の区分があればよい',
-      required: true,
-    },
+    { id: 'wiring_method', category: 'wiring_method', label: '配線方法（架空/露出/埋設）の記載',
+      description: '各区間の配線方法が明確に記載されているか。架空・露出・埋設の区別', required: true },
+    { id: 'conduit_spec', category: 'wiring_method', label: '配管の種類・サイズの記載',
+      description: '使用する配管の種類とサイズが記載されているか。正解例：PFD-28、VE-22、FEP-30、HIVE-42 等', required: true },
+    { id: 'conduit_material', category: 'wiring_method', label: '配管材質の記載（金属製/合成樹脂）',
+      description: '配管の材質区分が記載されているか。正解例：「金属製 G28」「合成樹脂 FEP30」等', required: true },
 
     // ── 設備配置・寸法 ──
-    {
-      id: 'equipment_position',
-      category: 'layout',
-      label: 'EV充電設備の配置位置',
-      description: 'EV充電設備の配置が図面上に示されているか。設備のラベル（EV充電設備1, 2等）と位置が確認できるか',
-      required: true,
-    },
-    {
-      id: 'power_source',
-      category: 'layout',
-      label: '電源元（受電盤/分電盤/キュービクル等）の記載',
-      description: '配線の起点となる電源元が記載されているか。正解例：受電盤、分電盤、キュービクル、受電設備 等。配線ルートの始点に位置する',
-      required: true,
-    },
-    {
-      id: 'wiring_route_line',
-      category: 'layout',
-      label: '配線ルートの線表示',
-      description: '配線ルートが図面上に線（赤色等）で図示されているか。電源元から各充電設備までの経路が視覚的に確認できるか',
-      required: true,
-    },
-    {
-      id: 'dimension_lines',
-      category: 'layout',
-      label: '位置関係がわかる寸法の記載',
-      description: '配線ルート上の各区間の距離（m単位）が記載されているか。正解例：7.2m、10.7m、2.5m 等。配線ルートに沿って距離が注記されているか',
-      required: true,
-    },
-    {
-      id: 'compass',
-      category: 'layout',
-      label: '方位記号（N）の記載',
-      description: '方位記号（北を示すN矢印）が図面上に記載されているか。通常は右上に配置',
-      required: true,
-    },
-    {
-      id: 'surface_material',
-      category: 'layout',
-      label: '路面状況の記載',
-      description: '路面を構成する材質が記載されているか。正解例：路面状況：アスファルト、路面状況：コンクリート、路面状況：土 等。特に埋設配管がある場合は埋設箇所の路面状況が必要',
-      required: true,
-    },
+    { id: 'equipment_position', category: 'layout', label: 'EV充電設備の配置位置',
+      description: 'EV充電設備の配置が図面上に示されているか', required: true },
+    { id: 'power_source', category: 'layout', label: '電源元（受電盤/分電盤/キュービクル等）の記載',
+      description: '配線の起点となる電源元が記載されているか', required: true },
+    { id: 'wiring_route_line', category: 'layout', label: '配線ルートの線表示',
+      description: '配線ルートが図面上に線で図示されているか。電源元から各充電設備までの経路が確認できるか', required: true },
+    { id: 'dimension_lines', category: 'layout', label: '位置関係がわかる寸法の記載',
+      description: '配線ルート上の各区間の距離（m単位）が記載されているか', required: true },
+    { id: 'compass', category: 'layout', label: '方位記号（N）の記載',
+      description: '方位記号（北を示すN矢印）が図面上に記載されているか', required: true },
+    { id: 'surface_material', category: 'layout', label: '路面状況の記載',
+      description: '路面を構成する材質が記載されているか。正解例：アスファルト、コンクリート、土等', required: true },
 
     // ── 付帯設備 ──
-    {
-      id: 'rise_info',
-      category: 'ancillary',
-      label: '立上げ・掘削の長さの記載',
-      description: '立上げ（地中から地上へケーブルを出す箇所）や掘削（地面を掘る箇所）がある場合、その長さが記載されているか。正解例：「立上げ 1m」「掘削 2m」「立ち上げ 0.5m」等。該当工事がない場合はパス',
-      required: false,
-    },
-    {
-      id: 'hand_hole',
-      category: 'ancillary',
-      label: 'ハンドホールの記載',
-      description: 'ハンドホール（地中配線の点検用マンホール）がある場合、設置位置と仕様（材質、蓋、よこ、長さ）が記載されているか。正解例：「ハンドホール 400×300×深さ2m」等。該当工事がない場合はパス',
-      required: false,
-    },
-    {
-      id: 'pole_info',
-      category: 'ancillary',
-      label: '支柱の記載',
-      description: '支柱（架空配線を支える柱）を設置する場合、支柱の位置が記載されているか。該当工事がない場合はパス',
-      required: false,
-    },
+    { id: 'rise_info', category: 'ancillary', label: '立上げ・掘削の長さの記載',
+      description: '立上げや掘削がある場合、その長さが記載されているか。該当工事がない場合はパス', required: false },
+    { id: 'hand_hole', category: 'ancillary', label: 'ハンドホールの記載',
+      description: 'ハンドホールがある場合、設置位置と仕様が記載されているか。該当がない場合はパス', required: false },
+    { id: 'pole_info', category: 'ancillary', label: '支柱の記載',
+      description: '支柱を設置する場合、位置が記載されているか。該当がない場合はパス', required: false },
   ];
 
-  // 基礎充電（マンション・集合住宅）固有チェック項目
   const KISO_CHECKS = [
-    {
-      id: 'building_name',
-      category: 'kiso_specific',
-      label: '建物名称の表示',
-      description: 'マンション・団地等の建物名称が図面上に表示されているか',
-      required: true,
-    },
-    {
-      id: 'surrounding_structures',
-      category: 'kiso_specific',
-      label: '周辺構造物の記載',
-      description: '建物、駐車場、駐輪場、フェンス、道路、植栽等の周辺構造物が記載されているか',
-      required: true,
-    },
-    {
-      id: 'utility_work_boundary',
-      category: 'kiso_specific',
-      label: '電力会社工事区間の明示',
-      description: '電力会社工事（電力会社が施工する区間）がある場合、その範囲が「電力会社工事」等のラベルで明示されているか。該当がない場合はパス',
-      required: false,
-    },
-    {
-      id: 'power_meter_kiso',
-      category: 'kiso_specific',
-      label: '電力量計の記載',
-      description: '新設電力量計（メーター）がある場合、設置位置が記載されているか。正解例：「新設電力量計」「電力量計（建物に取付）」等。該当がない場合はパス',
-      required: false,
-    },
+    { id: 'building_name', category: 'kiso_specific', label: '建物名称の表示',
+      description: 'マンション・団地等の建物名称が図面上に表示されているか', required: true },
+    { id: 'surrounding_structures', category: 'kiso_specific', label: '周辺構造物の記載',
+      description: '建物、駐車場、駐輪場、フェンス、道路、植栽等の周辺構造物が記載されているか', required: true },
+    { id: 'utility_work_boundary', category: 'kiso_specific', label: '電力会社工事区間の明示',
+      description: '電力会社工事区間がある場合、範囲が明示されているか。該当がない場合はパス', required: false },
+    { id: 'power_meter_kiso', category: 'kiso_specific', label: '電力量計の記載',
+      description: '新設電力量計がある場合、設置位置が記載されているか。該当がない場合はパス', required: false },
   ];
 
-  // 目的地充電（商業施設等）固有チェック項目
   const MOKUTEKICHI_CHECKS = [
-    {
-      id: 'pull_box',
-      category: 'mokutekichi_specific',
-      label: 'プルボックスの記載',
-      description: 'プルボックス（配線の分岐・接続箱）がある場合、設置位置と仕様が記載されているか。正解例：「新設プルボックス 200×200×100」「新設アルボックス 200×200×100」等。該当がない場合はパス',
-      required: false,
-    },
-    {
-      id: 'power_meter_mokutekichi',
-      category: 'mokutekichi_specific',
-      label: '電力量計の記載',
-      description: '新設電力量計（メーター）がある場合、設置位置が記載されているか。正解例：「新設電力量計」「新設電力量計（建物に取付）」等。該当がない場合はパス',
-      required: false,
-    },
-    {
-      id: 'switch_pole',
-      category: 'mokutekichi_specific',
-      label: '開閉器ポール/分岐盤の記載',
-      description: '開閉器ポールや分岐盤がある場合、設置位置が記載されているか。正解例：「新設開閉器ポール」「既設開閉器ポール」等。該当がない場合はパス',
-      required: false,
-    },
-    {
-      id: 'existing_route',
-      category: 'mokutekichi_specific',
-      label: '既設充電設備の配線ルート（該当する場合）',
-      description: '既設充電設備がある場合、既設設備の位置と配線ルートが記載されているか。既設と新設で色分け（新設=赤、既設=青等）またはページ分離がされているか',
-      required: false,
-    },
-    {
-      id: 'new_existing_distinction',
-      category: 'mokutekichi_specific',
-      label: '新設/既設の区別',
-      description: '新設と既設の充電設備・配線ルートが区別されているか。正解例：色分け（新設=赤、既設=青）、ページ分離（配線ルート図1=新設、配線ルート図2=既設）、「残置」ラベル等。既設がない場合はパス',
-      required: false,
-    },
+    { id: 'pull_box', category: 'mokutekichi_specific', label: 'プルボックスの記載',
+      description: 'プルボックスがある場合、設置位置と仕様が記載されているか。該当がない場合はパス', required: false },
+    { id: 'power_meter_mokutekichi', category: 'mokutekichi_specific', label: '電力量計の記載',
+      description: '新設電力量計がある場合、設置位置が記載されているか。該当がない場合はパス', required: false },
+    { id: 'switch_pole', category: 'mokutekichi_specific', label: '開閉器ポール/分岐盤の記載',
+      description: '開閉器ポールや分岐盤がある場合、位置が記載されているか。該当がない場合はパス', required: false },
+    { id: 'existing_route', category: 'mokutekichi_specific', label: '既設充電設備の配線ルート（該当する場合）',
+      description: '既設充電設備がある場合、既設の位置と配線ルートが記載されているか', required: false },
+    { id: 'new_existing_distinction', category: 'mokutekichi_specific', label: '新設/既設の区別',
+      description: '新設と既設の充電設備・配線ルートが区別されているか。色分けまたはページ分離。既設がない場合はパス', required: false },
   ];
 
-  // カテゴリ定義
+  // ─── 作図センターマニュアル チェック項目 ────────────
+  const MANUAL_CHECKS = [
+    // ── 配線集計表 ──
+    { id: 'mc_summary_table', category: 'manual_summary', label: '配線集計表（統括表）の存在',
+      description: '図面内に配線集計表（統括表）が表形式で記載されているか。ケーブル種別ごとに全長・内訳（露出/管内/埋設）・配管種別が記載された表', required: true },
+    { id: 'mc_summary_order', category: 'manual_summary', label: '統括表の記載順序',
+      description: '統括表の記載が[種別用途][配管種類・口径]の順で、露出配管接続→露出配管→埋設配管の順序になっているか。配管はPFD→HIVE→FEP等の順', required: true },
+    { id: 'mc_summary_cable_breakdown', category: 'manual_summary', label: 'ケーブル種別ごとの全長・内訳',
+      description: '各ケーブル種別（CVT○sq、CV○sq-3C等）について、全長と配線方法別内訳（露出/管内/埋設）の長さ(m)が記載されているか', required: true },
+
+    // ── 配線注記 ──
+    { id: 'mc_annotation_format', category: 'manual_annotation', label: '配線注記の4要素記載',
+      description: '各区間の配線注記に「ケーブル種別」「配線方法」「管種-管径」「距離(m)」の4要素が全て記載されているか。正解例：「CVT8sq-3C 露出配管 PFD-36 13m」', required: true },
+    { id: 'mc_cable_conduit_match', category: 'manual_annotation', label: 'ケーブルと配管サイズの整合性',
+      description: 'ケーブル種別に対して適切な配管サイズが使用されているか。仕様書準拠：CVT8sq-3C→PFD-28/HIVE-28、CVT22sq→PFD-28、CVT38sq→PFD-36等', required: true },
+    { id: 'mc_length_unit', category: 'manual_annotation', label: '距離の単位表記(m)',
+      description: '全ての配線距離がm（メートル）単位で統一されているか。mm/cmの混在がないか', required: true },
+
+    // ── 埋設関連 ──
+    { id: 'mc_burial_hatching', category: 'manual_burial', label: '埋設ハッチング色の適合性',
+      description: '埋設区間がある場合、ハッチング色が適切か。アスファルト/コンクリート=赤色ハッチング、土/砂利=緑色ハッチング。該当がない場合はパス', required: false },
+    { id: 'mc_burial_conduit_type', category: 'manual_burial', label: '埋設配管種別の適合性',
+      description: '埋設配管にFEP管またはPFD管が使用されているか。該当がない場合はパス', required: false },
+    { id: 'mc_burial_dimension', category: 'manual_burial', label: '埋設寸法（幅×深さ）の記載',
+      description: '埋設区間がある場合、埋設寸法（幅400mm×深さ400mm、または幅200mm×深さ200mm）が記載されているか。該当がない場合はパス', required: false },
+
+    // ── プルボックス ──
+    { id: 'mc_pullbox_dimension', category: 'manual_pullbox', label: 'プルボックス寸法表記(W×H×D)',
+      description: 'プルボックスがある場合、W×H×D(mm)の3数値で寸法が記載されているか。正解例：200×200×100、250×250×100、300×300×150等。該当がない場合はパス', required: false },
+    { id: 'mc_pullbox_placement', category: 'manual_pullbox', label: 'プルボックス設置基準の準拠',
+      description: 'プルボックスが設置基準に準拠しているか：①3つ目の曲がりに設置、②垂直6m毎・水平30m毎、③分岐点で配管径が変わる箇所。該当がない場合はパス', required: false },
+    { id: 'mc_pullbox_size_spec', category: 'manual_pullbox', label: 'プルボックスサイズの仕様書準拠',
+      description: 'プルボックスのサイズが仕様書に準拠しているか。PFD/HIVE28→200×200×100、36→200×200×100、42→250×250×100、54→250×250×100、HIVE70→300×300×200等。該当がない場合はパス', required: false },
+
+    // ── ケーブルプロテクター ──
+    { id: 'mc_cable_protector', category: 'manual_protector', label: 'ケーブルプロテクターの表記',
+      description: 'ケーブルプロテクターがある場合、オレンジ色ハッチングで表示されているか。CP2-60X3MBK基準。該当がない場合はパス', required: false },
+
+    // ── 表記規則 ──
+    { id: 'mc_new_existing_prefix', category: 'manual_notation', label: '新設/既設の明確なプレフィックス表記',
+      description: '全ての設備ラベルに「新設」または「既設」のプレフィックスが付いているか。例：「新設プルボックス」「既設分電盤」「新設EV充電設備」等', required: true },
+    { id: 'mc_color_coding', category: 'manual_notation', label: '配線ルートの色分けルール',
+      description: '配線ルートの色分けがマニュアル準拠か。新設配線=赤色線、既設配線=青色線、電力会社工事=緑線等の区分', required: true },
+    { id: 'mc_vvf_exposure', category: 'manual_notation', label: 'VVF外部露出配線の禁止',
+      description: 'VVF2mm-2CまたはVVF2mm-3Cが外部（屋外）において露出配線（管なし）で使用されていないか。VVFは屋外では必ず管内配線とする。VVFが使用されていない場合はパス', required: false },
+    { id: 'mc_cable_excess_length', category: 'manual_notation', label: 'ケーブル余長の考慮',
+      description: '立上げ箇所でケーブル余長が適切に考慮されているか。仕様書：H=6000→4m、H=7000→5m、H=8000→6m、H=9000→7m。該当がない場合はパス', required: false },
+  ];
+
+  // ─── カテゴリ定義 ─────────────────────────────────
   const CATEGORIES = {
-    title_block:            { title: '(1)表題欄（図面基本情報）',      icon: '&#128203;', order: 1 },
-    wiring_info:            { title: '(2)配線情報（電線・全長・内訳）', icon: '&#128268;', order: 2 },
-    wiring_method:          { title: '(3)配線方法・配管',              icon: '&#128295;', order: 3 },
-    layout:                 { title: '(4)設備配置・寸法・路面',         icon: '&#128207;', order: 4 },
-    ancillary:              { title: '(5)付帯設備（立上げ・HH・支柱）', icon: '&#128736;', order: 5 },
-    kiso_specific:          { title: '(6)基礎充電 固有項目',           icon: '&#127970;', order: 6 },
-    mokutekichi_specific:   { title: '(6)目的地充電 固有項目',         icon: '&#127978;', order: 6 },
+    // NeV要件判定カテゴリ
+    title_block:            { title: '(1)表題欄（図面基本情報）',      icon: '&#128203;', order: 1, group: 'nev' },
+    wiring_info:            { title: '(2)配線情報（電線・全長・内訳）', icon: '&#128268;', order: 2, group: 'nev' },
+    wiring_method:          { title: '(3)配線方法・配管',              icon: '&#128295;', order: 3, group: 'nev' },
+    layout:                 { title: '(4)設備配置・寸法・路面',         icon: '&#128207;', order: 4, group: 'nev' },
+    ancillary:              { title: '(5)付帯設備（立上げ・HH・支柱）', icon: '&#128736;', order: 5, group: 'nev' },
+    kiso_specific:          { title: '(6)基礎充電 固有項目',           icon: '&#127970;', order: 6, group: 'nev' },
+    mokutekichi_specific:   { title: '(6)目的地充電 固有項目',         icon: '&#127978;', order: 6, group: 'nev' },
+    // 作図センターマニュアル判定カテゴリ
+    manual_summary:         { title: '(A)配線集計表（統括表）',        icon: '&#128202;', order: 10, group: 'manual' },
+    manual_annotation:      { title: '(B)配線注記フォーマット',        icon: '&#128221;', order: 11, group: 'manual' },
+    manual_burial:          { title: '(C)埋設関連',                   icon: '&#9939;',   order: 12, group: 'manual' },
+    manual_pullbox:         { title: '(D)プルボックス',               icon: '&#128230;', order: 13, group: 'manual' },
+    manual_protector:       { title: '(E)ケーブルプロテクター',        icon: '&#128737;', order: 14, group: 'manual' },
+    manual_notation:        { title: '(F)表記規則',                   icon: '&#128196;', order: 15, group: 'manual' },
   };
 
   // ─── Gemini プロンプト生成 ──────────────────────
   function buildPrompt(type) {
-    const checks = type === 'kiso'
+    const nevChecks = type === 'kiso'
       ? [...COMMON_CHECKS, ...KISO_CHECKS]
       : [...COMMON_CHECKS, ...MOKUTEKICHI_CHECKS];
 
-    const checkListText = checks.map((c, i) => {
-      return `${i + 1}. [${c.id}] ${c.label}\n   確認内容: ${c.description}\n   必須: ${c.required ? 'はい' : 'いいえ（該当する場合のみ）'}`;
-    }).join('\n\n');
+    const nevCheckListText = nevChecks.map((c, i) =>
+      `${i + 1}. [${c.id}] ${c.label}\n   確認内容: ${c.description}\n   必須: ${c.required ? 'はい' : 'いいえ（該当する場合のみ）'}`
+    ).join('\n\n');
+
+    const manualCheckListText = MANUAL_CHECKS.map((c, i) =>
+      `${i + 1}. [${c.id}] ${c.label}\n   確認内容: ${c.description}\n   必須: ${c.required ? 'はい' : 'いいえ（該当する場合のみ）'}`
+    ).join('\n\n');
 
     const typeLabel = type === 'kiso'
       ? '基礎充電（マンション・集合住宅向け）'
       : '目的地充電（商業施設・ホテル・ゴルフ場等向け）';
 
-    return `あなたはNeV補助金（次世代自動車充電インフラ整備促進事業）の「配線ルート図」の審査エキスパートです。
-補助金要件 5-9-3「配線ルート図」に基づき、アップロードされた図面PDFを非常に高い精度で分析してください。
-これはEV充電設備の補助金申請における配線ルート図（電源から充電設備までの配線経路・電線種類・配管仕様等を示す技術図面）です。
+    return `あなたはNeV補助金の「配線ルート図」審査と作図センターマニュアル準拠チェックのエキスパートです。
+アップロードされたEV充電設備の配線ルート図PDFを非常に高い精度で分析し、以下の3つの作業を行ってください：
+1. NeV補助金要件（5-9-3）に基づくチェック
+2. 作図センターマニュアルに基づくチェック
+3. 配線・配管の種別ごとの合計値算出
 
-## 重要：配線ルート図とは
-配線ルート図は、電源元（受電盤・キュービクル・分電盤等）からEV充電設備までの配線経路を示す技術図面です。
-平面図（充電スペースの寸法・配置を示す図面）や設置場所見取図（敷地全体の広域図）とは異なり、
-電線の種類・サイズ、配線方法（架空・露出・埋設）、配管の仕様、各区間の距離等を詳細に示します。
+## 図面タイプ: ${typeLabel}
 
-## 図面タイプ
-${typeLabel}
+## 【Part 1】NeV補助金要件チェック
 
-## 補助金要件（5-9-3 配線ルート図）
-
-### 基本要件
-配線ルート図には、以下の内容を記載する必要があります：
+### 基本要件（5-9-3 配線ルート図）
 - 電源元から充電設備間の配線ルート
-- 電線の種類（ケーブル型番・サイズ）
-- 配線方法（架空・露出・埋設）を明確に記載
-- 配管の仕様（材質・径）を記載
-- 配線の全長と導線を記載
-- 位置関係がわかる寸法を記載
-- 路面を構成する材質を記載（アスファルト、コンクリート、土等）
-- キュービクル・受電盤・充電設備の位置を記載
-- 立上げ・掘削がある場合はその長さを記載
-- 埋設の場合は、埋設箇所の路面状況を記載
+- 電線の種類（ケーブル型番・サイズ）、配線方法（架空・露出・埋設）
+- 配管の仕様（材質・径）、配線の全長と内訳
+- 位置関係がわかる寸法、路面材質
+- 立上げ・掘削がある場合はその長さ
 
-### (1) 表題欄（図面右下の枠内）
-以下の項目が表題欄に記載されている必要があります：
-- **設置場所**: 申請で入力した設置場所名称（略称不可）
-- **図面名称**: 「配線ルート図」と記載（「配線ルート図1」「配線ルート図2」も可）
-  - 不備事例：「配線図」「電気配線図」「ルート図」等は不可
-- **工事名**: 「充電設備設置工事」「普通充電設備設置工事」等
-- **作成者**: 会社名または個人名
-- **縮尺**: 数値（例: A3:1/100、1/150 等）
-- **作成日**: 年月日の記載
+### 正解事例パターン（44件分析結果）
+- 表題欄: 右下枠内に設置場所・図面名称「配線ルート図」・工事名・作成者・縮尺・作成日
+- 配線集計表: ケーブル種別ごとに全長→内訳（露出/管内/埋設）→配管種別の表形式
+- 配線注記: 「CV5sq-3C 露出配管 PFD-28 13m」形式で各区間に記載
+- 色分け: 赤=新設/露出、青=既設/地中、緑=電力会社工事
+- プルボックス: 「新設プルボックス 200×200×100」形式
+- 方位記号: 右上にN矢印
 
-### (2) 配線情報
-- **電線の種類・サイズ**: CV5.5-3C、CV5sq-3C、CVT100sq 等
-- **全長**: 配線の総延長をm単位で記載
-- **内訳**: 配線方法別の距離内訳（露出○m、管内金属製○m、埋設○m等）
-- **各区間の詳細**: 配線ルート上の各区間に、電線種類・配管種類・距離を注記
+### NeVチェック項目
+${nevCheckListText}
 
-### (3) 配線方法・配管
-- **配線方法**: 架空（空中）、露出（壁面・天井沿い）、埋設（地中）を区別
-- **配管の種類**: PF、VE、FEP、G、E、HIVE、CD 等の管種と径
-- **配管の材質**: 金属製（G管・E管等）または合成樹脂（PF管・VE管・FEP管・CD管等）
+## 【Part 2】作図センターマニュアル判定
 
-### (4) 設備配置・寸法
-- **EV充電設備**: 各充電設備の位置をラベル付きで表示
-- **電源元**: 受電盤/分電盤/キュービクル等の位置を表示
-- **配線ルート線**: 電源元から充電設備までの経路を線で図示
-- **寸法**: 各区間の距離をm単位で記載
-- **方位記号**: 北を示すN矢印
-- **路面状況**: 路面の材質（アスファルト、コンクリート、土等）
+作図センター（ミライズエネチェンジ）の以下のマニュアルに基づく準拠チェックです：
+- 交付申請図面作成マニュアル
+- 交付申請図面における配線配管長の考え方
+- 標準設計仕様書Ver4.0
 
-### (5) 付帯設備（該当する場合のみ）
-- **支柱**: 架空配線を支える柱。設置する場合は位置を記載
-- **ハンドホール**: 地中配線の点検口。設置する場合は位置・仕様（材質・蓋・寸法）を記載
-  - 正解例：「ハンドホール 幅400mm, 深さ300mm, 長さ2m」
-- **立上げ・掘削**: 地中配線が地上に出る箇所。長さを記載
+### マニュアル主要ルール
+1. **配線集計表**: ケーブル種別→全長→内訳（露出/管内/埋設）→配管種別・口径の順で記載
+2. **配線注記**: 「ケーブル種別 配線方法 管種-管径 距離m」の4要素を全区間に記載
+3. **ケーブル・配管サイズ対応**: CVT8sq-3C→PFD-28/HIVE-28、CVT22sq→PFD-28、CVT38sq→PFD-36、CVT60sq→PFD-42/HIVE-42、CVT100sq→PFD-54/HIVE-54
+4. **埋設ハッチング色**: アスファルト/コンクリート=赤、土/砂利=緑
+5. **埋設配管**: FEP管またはPFD管を使用。埋設寸法は幅400mm×深さ400mm or 幅200mm×深さ200mm
+6. **プルボックス設置基準**: ①3つ目の曲がりに設置、②垂直6m毎・水平30m毎、③分岐点で配管径変更
+7. **プルボックスサイズ**: PFD/HIVE28→200×200×100、36→200×200×100、42→250×250×100、54→250×250×100
+8. **ケーブルプロテクター**: オレンジ色ハッチング、大研化成CP2-60X3MBK基準
+9. **VVF外部露出禁止**: VVF2mm-2C/3Cは屋外で露出配線（管なし）不可
+10. **ケーブル余長**: 立上げH=6000→4m、H=7000→5m、H=8000→6m、H=9000→7m
+11. **新設/既設プレフィックス**: 全設備ラベルに「新設」「既設」を付与
+12. **色分け**: 新設=赤、既設=青、電力会社工事=緑
+13. **デュアルスタンド配管**: PFD-36またはFEP-40のみ可
 
-${type === 'mokutekichi' ? `### (6) 目的地充電の追加要件
-- **プルボックス**: 配線の分岐・接続箱がある場合、位置・仕様を記載
-  - 正解例：「新設プルボックス 200×200×100」「新設アルボックス 200×200×100」
-- **電力量計**: 新設電力量計がある場合、設置位置を記載
-- **開閉器ポール/分岐盤**: ある場合、位置を記載
-- **既設充電設備**: 既設がある場合、既設の位置と配線ルートを記載
-- **新設/既設の区別**: 色分け（新設=赤、既設=青）またはページ分離で区別
-` : `### (6) 基礎充電の追加要件
-- **建物名称**: マンション・団地名を図面上に表示
-- **周辺構造物**: 建物、駐車場、駐輪場、フェンス、道路等を記載
-- **電力会社工事**: 電力会社施工区間がある場合、範囲を明示
-- **電力量計**: 新設電力量計がある場合、設置位置を記載
-`}
+### マニュアルチェック項目
+${manualCheckListText}
 
-## 正解事例から学んだパターン（40件以上の分析結果）
+## 【Part 3】配線・配管 種別ごとの合計値算出
 
-### 表題欄の標準パターン（図面右下の枠内）
-- **設置場所**: 施設名のみ記載（例: 「キコーナ伊川谷店」「リリーヴィレッジＣＲＥＳＴ」）
-- **図面名称**: 「配線ルート図」（複数ページの場合は「配線ルート図1」「配線ルート図2」「配線ルート図3」）
-- **図面名称**: 別パターンとして「図面名 配線ルート図」の形式もある
-- **工事名**: 「充電設備設置工事」が最も多い。「普通充電設備設置工事」もある
-- **作成者**: 会社ロゴ＋会社名（例: 「ENECHANGE EVラボ株式会社」）
-- **縮尺**: 「A3:1/100」が最も一般的。「A3:1/150」「A3:1/200」もある
-- **作成日**: YYYY年MM月DD日 形式（例: 2025年05月01日）
+図面から読み取れる全ての配線（ケーブル）と配管について、種別ごとの合計長さを算出してください。
+配線集計表がある場合はその数値を使用し、ない場合は各区間の注記から集計してください。
 
-### 配線集計表の標準パターン（図面左上〜中央に配置される表形式）
-正解事例では、配線情報を「配線集計表」として図面内に表形式で整理して記載しています：
+### 配線（ケーブル）の種別例
+CVT8sq、CVT14sq、CVT22sq、CVT38sq、CVT60sq、CVT100sq、CV5.5-3C、CV5sq-3C、CV8sq-3C、CV14sq-3C、CV22sq-3C、CV38sq-3C、CV60sq-3C、CV100sq-3C、VVF2mm-2C、VVF2mm-3C、IV5.5sq 等
 
-**普通充電の場合（CV5sq-3C / CV5.5-3C）:**
-\`\`\`
-CV5sq-3C  全長          ○○m
-          内訳  露出              ○m
-                管内  PF5-28      ○m
-                      VE-22       ○m
-                埋設  FEP-30      ○m
-                合計              ○○m
-\`\`\`
-
-**急速充電の場合（CVT100sq 等の太い電線）:**
-\`\`\`
-CVT100sq  全長          ○○m
-          内訳  露出              ○m
-                管内  金属製 G54   ○m
-                合計              ○○m
-\`\`\`
-
-### 各区間の配線注記パターン（配線ルート上に緑色テキストで記載）
-正解事例では、配線ルート上の各区間ごとに以下の形式で詳細が注記されています：
-- **「CV5sq-3C 露出配管 PF5-28 ○m」** — 露出区間（壁面・天井沿い）
-- **「CV5sq-3C 露出配管 VE-22 ○m（ケーブル入れ入れ）」** — VE管露出区間
-- **「CV5sq-3C 埋設配管 FEP-30 ○m」** — 地中埋設区間
-- **「CV5sq-3C 露出配管 PF5-28 立ち上げ ○m」** — 立上げ区間
-- **「CVT100sq 露出配管 G[54] ○m」** — 金属管露出区間
-- **「CVT100sq 新設 露出配管 G[54] ○m」** — 新設明記の区間
-- **「CV5sq-3C 天井内配管 PF5-28 ○m（ケーブル入れ入れ）」** — 天井内区間
-
-### EV充電設備の配線接続パターン
-- **壁面設置**: 「EV充電設備(壁面設置)」のラベル。壁面にケーブルが到達する形
-- **金属架台**: 「EV充電設備(金属架台)」のラベル。架台上の設備にケーブル接続
-- **EV充電設備周りの配線注記**: 「EV充電設備内配線 ○m」として設備内の配線も記載
-
-### 付帯設備の標準パターン
-- **新設プルボックス**: 「新設プルボックス 200×200×100」「新設アルボックス 200×200×100」
-- **新設電力量計**: 「新設電力量計」「新設電力量計（建物に取付）」「新設電力量計（既設開閉器ポールに取付）」
-- **新設開閉器ポール**: 「新設開閉器ポール」
-- **電力会社工事**: 「電力会社工事」のラベルで施工範囲を明示
-- **ハンドホール**: 「ハンドホール 幅○mm, 深さ○mm, 長さ○m」
-
-### 配線ルート線の表現パターン
-- **赤色の線**: 新設の配線ルートを示す
-- **青色の線**: 既設の配線ルートを示す（該当する場合）
-- **矢印付き**: 配線の方向を示す矢印が付く場合がある
-- **番号付き参照**: ①②③④⑤⑥ 等の番号で配線区間を参照
-
-### A3用紙の標準レイアウト
-- 用紙サイズ: A3横（約420mm × 297mm）
-- 表題欄: 図面右下に配置
-- 方位記号: 図面右上に配置（N↑）
-- 配線集計表: 図面左上〜左中に配置
-- 配線ルート本体: 中央に配置
-- 各区間の配線注記: 配線ルートに沿って緑色テキストで記載
-
-${type === 'mokutekichi' ? `### 目的地充電の正解パターン
-- **複数ページ構成**: 新設のみ=1ページ、既設あり=2〜3ページ
-- **ページ分け**: 配線ルート図1（新設分）、配線ルート図2（既設分）、配線ルート図3（追加分）
-- **色分け**: 新設配線=赤色線、既設配線=青色線
-- **既設表記**: 「既設EV充電設備 残置」「既設配線 残置」等
-- **プルボックス**: 配線の分岐点に新設プルボックスが配置されることが多い
-- **電力量計・開閉器**: 受電盤〜充電設備間に新設電力量計が設置されることが多い
-` : `### 基礎充電の正解パターン
-- **ページ構成**: 基本的に1〜2ページ
-- **建物名称**: 図面上にマンション名・団地名が大きく表示
-- **電力会社工事**: 引込線〜電力量計までが電力会社工事区間として明示
-- **新設電力量計**: 建物の外壁や既設ポールに取付の注記がある
-- **周辺構造物**: 建物、駐車場、道路、フェンス、植栽等が描画
-- **電力会社の引込**: 「電力会社工事」のラベルで引込線区間を明示
-`}
-
-## チェック項目
-${checkListText}
+### 配管の種別例
+PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-42、HIVE-54、FEP-30、FEP-40、FEP-50、FEP-54、VE-22、VE-28、G28、G54、E25、CD-22 等
 
 ## 回答フォーマット（厳密にこのJSON形式で返してください）
-以下のJSON形式のみで回答してください。JSONの前後に余計なテキストは不要です。
 
 \`\`\`json
 {
-  "results": [
+  "nev_results": [
     {
       "id": "チェック項目ID",
       "status": "pass | fail | warn",
-      "found_text": "図面から実際に読み取れた内容（なるべく具体的に。読み取れたテキスト・数値をそのまま記載）",
-      "detail": "判定理由の詳細説明"
+      "found_text": "図面から読み取れた内容（具体的に）",
+      "detail": "判定理由の詳細"
     }
   ],
-  "overall_comment": "図面全体に対する総合コメント（良い点・改善が必要な点を含む。400文字程度で具体的に）",
+  "manual_results": [
+    {
+      "id": "マニュアルチェック項目ID",
+      "status": "pass | fail | warn",
+      "found_text": "図面から読み取れた内容",
+      "detail": "判定理由の詳細"
+    }
+  ],
+  "wire_totals": [
+    {
+      "type": "ケーブル種別（例: CVT22sq）",
+      "total_length_m": 数値,
+      "breakdown": {
+        "exposed_m": 数値,
+        "in_conduit_m": 数値,
+        "buried_m": 数値,
+        "aerial_m": 数値
+      }
+    }
+  ],
+  "conduit_totals": [
+    {
+      "type": "配管種別（例: PFD-28）",
+      "total_length_m": 数値,
+      "method": "露出 | 埋設 | 架空"
+    }
+  ],
+  "overall_comment": "図面全体の総合コメント（400文字程度。NeV要件とマニュアル準拠の両面から評価）",
   "detected_info": {
-    "facility_name": "読み取れた施設名",
-    "drawing_title": "読み取れた図面名称",
-    "project_name": "読み取れた工事名",
-    "creator": "読み取れた作成者名",
-    "scale": "読み取れた縮尺",
-    "creation_date": "読み取れた作成日",
-    "wire_type": "読み取れた電線の種類（例: CV5.5-3C）",
-    "total_length": "読み取れた配線全長（例: 20.1m）",
-    "length_breakdown": "配線内訳の要約（例: 露出10.7m, 管内G28 2.5m, 埋設FEP30 2.0m）",
-    "wiring_methods": "確認できた配線方法の一覧（例: 露出, 埋設）",
-    "conduit_types": "確認できた配管種類の一覧（例: PF5-28, VE-22, FEP-30）",
-    "power_source": "読み取れた電源元（例: 受電盤, キュービクル）",
-    "equipment_count": "読み取れたEV充電設備の台数",
-    "surface_material": "読み取れた路面状況",
-    "ancillary_equipment": "確認できた付帯設備（例: プルボックス, 電力量計, ハンドホール）",
-    "existing_equipment_info": "読み取れた既設設備情報（なければ空文字）",
-    "page_count_analyzed": "解析したページ数"
+    "facility_name": "施設名",
+    "drawing_title": "図面名称",
+    "project_name": "工事名",
+    "creator": "作成者",
+    "scale": "縮尺",
+    "creation_date": "作成日",
+    "wire_type": "電線種類",
+    "total_length": "配線全長",
+    "length_breakdown": "配線内訳の要約",
+    "wiring_methods": "配線方法一覧",
+    "conduit_types": "配管種類一覧",
+    "power_source": "電源元",
+    "equipment_count": "EV充電設備台数",
+    "surface_material": "路面状況",
+    "ancillary_equipment": "付帯設備",
+    "existing_equipment_info": "既設設備情報",
+    "page_count_analyzed": "解析ページ数"
   }
 }
 \`\`\`
 
 ## 判定基準
-- **pass**: 要件を満たしている（明確に記載が確認できる）
-- **fail**: 要件を満たしていない（記載が見当たらない、または明らかに不十分）
-- **warn**: 記載はあるが不明瞭、または要件を部分的にしか満たしていない
+- **pass**: 要件/ルールを満たしている
+- **fail**: 要件/ルールを満たしていない
+- **warn**: 記載はあるが不明瞭、または部分的にしか満たしていない
 
-## 判定の注意事項（精度向上のために必ず守ること）
-
-### 全体的な確認方法
-- 画像を非常に注意深く、隅々まで確認してください
-- **拡大して細部まで読み取る**つもりで、小さな文字やラベルも見逃さないでください
+## 重要な注意事項
+- 画像を隅々まで注意深く確認し、小さな文字やラベルも読み取ってください
 - 複数ページがある場合は全ページを確認してください
-- 配線ルート図は技術図面のため、細かい注記が多数あります。全て読み取ってください
-
-### 表題欄の確認方法
-- **図面の右下**にある枠線で囲まれた領域を重点的に確認
-- 枠内に「設置場所」「図面名」「作成者」「縮尺」「作成日」等のラベルがあるはずです
-- 「図面名称」が「配線ルート図」であることを厳密に確認
-
-### 配線集計表の確認方法
-- **図面の左上〜左中エリア**に表形式で配線情報がまとめられていることが多い
-- 表の中に「全長」「内訳」「露出」「管内」「埋設」等のキーワードを探す
-- 電線種類（CV5sq-3C等）と各区間の距離を確認
-
-### 配線ルート上の注記確認方法
-- 配線ルートの線に沿って、**緑色のテキスト**で各区間の詳細が記載されている
-- 「CV5sq-3C 露出配管 PF5-28 ○m」のような形式の注記を探す
-- 各区間の電線種類・配管種類・距離が記載されているか確認
-
-### 設備の確認方法
-- 「EV充電設備」「受電盤」「分電盤」「キュービクル」等のラベルを探す
-- 電源元から充電設備までの配線ルートが線で描かれているか確認
-- 「新設電力量計」「新設プルボックス」等の付帯設備ラベルを探す
-
-### 路面・寸法の確認方法
-- 「路面状況：○○」「路面：アスファルト」等のテキストを探す
-- 配線ルート上の各区間にm単位の距離が記載されているか確認
-- 方位記号（N矢印）は通常、図面右上にあります
-
-${type === 'mokutekichi' ? `### 目的地充電の追加確認
-- 既設充電設備がある場合は**青色の線・ラベル**を確認
-- 「残置」「既設」のテキストがあるか確認
-- 複数ページの場合、各ページの図面名称を確認（配線ルート図1、配線ルート図2 等）
-- プルボックス・電力量計・開閉器ポールの有無を確認
-` : `### 基礎充電の追加確認
-- 建物名称が図面上に表示されているか確認
-- 電力会社工事区間が明示されているか確認
-- 周辺構造物（建物、駐車場、道路等）の描画を確認
-`}
-
-### 重要な注意事項
-- 「該当する場合のみ」のチェック項目は、該当しない場合（例：ハンドホールがない場合）は **pass** としてください
-- found_text には図面から読み取れた具体的なテキスト・数値を記載してください。推測は不可です
-- 全てのチェック項目について必ず結果を返してください（スキップ不可）
-- 図面のどの位置から情報を読み取ったかを detail に含めてください`;
+- 「該当する場合のみ」の項目は、該当しない場合は **pass** としてください
+- found_text には図面から読み取れた具体的なテキスト・数値を記載（推測不可）
+- wire_totals / conduit_totals は図面から読み取れた数値のみ記載。読み取れない場合は空配列 []
+- 全てのチェック項目について必ず結果を返してください（スキップ不可）`;
   }
 
   // ─── PDF → 画像変換 ────────────────────────────
@@ -556,7 +345,7 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
 
     const images = [];
     const pageCount = pdf.numPages;
-    const maxPages = Math.min(pageCount, 5);
+    const maxPages = Math.min(pageCount, 6);
     let totalBase64Size = 0;
 
     for (let i = 1; i <= maxPages; i++) {
@@ -581,7 +370,6 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
       }
 
       images.push({ base64, mimeType: 'image/jpeg', pageNum: i });
-
       canvas.width = 0;
       canvas.height = 0;
     }
@@ -632,7 +420,6 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
     }
   }
 
-  // ─── 全モデル一括接続テスト ────────────────────
   async function verifyAllModels(apiKey) {
     const results = {};
     await Promise.all(MODELS.map(async (model) => {
@@ -663,7 +450,7 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
       ],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 12288,
         responseMimeType: "application/json",
       },
     };
@@ -695,7 +482,7 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
 
     const candidate = data.candidates[0];
     if (candidate.finishReason === 'SAFETY') {
-      throw new Error('Gemini の安全フィルタにより応答がブロックされました。図面の内容を確認してください。');
+      throw new Error('Gemini の安全フィルタにより応答がブロックされました。');
     }
 
     const parts = candidate?.content?.parts || [];
@@ -733,25 +520,19 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
     return response.ok;
   }
 
-  // ─── 結果集計 ──────────────────────────────────
-  function aggregateResults(geminiResult, type) {
+  // ─── NeV結果集計 ──────────────────────────────
+  function aggregateNevResults(geminiResult, type) {
     const checks = type === 'kiso'
       ? [...COMMON_CHECKS, ...KISO_CHECKS]
       : [...COMMON_CHECKS, ...MOKUTEKICHI_CHECKS];
 
     const resultMap = {};
-    if (geminiResult.results) {
-      geminiResult.results.forEach(r => { resultMap[r.id] = r; });
-    }
+    const rawResults = geminiResult.nev_results || geminiResult.results || [];
+    rawResults.forEach(r => { resultMap[r.id] = r; });
 
     const items = checks.map(check => {
       const result = resultMap[check.id] || { status: 'fail', found_text: '', detail: '判定結果が取得できませんでした' };
-      return {
-        ...check,
-        status: result.status,
-        found_text: result.found_text || '',
-        detail: result.detail || '',
-      };
+      return { ...check, status: result.status, found_text: result.found_text || '', detail: result.detail || '' };
     });
 
     const categoryResults = {};
@@ -773,64 +554,84 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
     const totalPass = items.filter(i => i.status === 'pass').length;
 
     let overall;
-    if (requiredFail === 0) {
-      overall = 'pass';
-    } else if (requiredFail <= 2) {
-      overall = 'warn';
-    } else {
-      overall = 'fail';
-    }
+    if (requiredFail === 0) overall = 'pass';
+    else if (requiredFail <= 2) overall = 'warn';
+    else overall = 'fail';
 
-    return {
-      items,
-      categoryResults,
-      overall,
-      totalPass,
-      totalItems: items.length,
-      requiredPass,
-      requiredTotal: totalRequired.length,
-      requiredFail,
-      overallComment: geminiResult.overall_comment || '',
-      detectedInfo: geminiResult.detected_info || {},
-    };
+    return { items, categoryResults, overall, totalPass, totalItems: items.length, requiredPass, requiredTotal: totalRequired.length, requiredFail };
+  }
+
+  // ─── マニュアル結果集計 ────────────────────────
+  function aggregateManualResults(geminiResult) {
+    const checks = MANUAL_CHECKS;
+
+    const resultMap = {};
+    const rawResults = geminiResult.manual_results || [];
+    rawResults.forEach(r => { resultMap[r.id] = r; });
+
+    const items = checks.map(check => {
+      const result = resultMap[check.id] || { status: 'fail', found_text: '', detail: '判定結果が取得できませんでした' };
+      return { ...check, status: result.status, found_text: result.found_text || '', detail: result.detail || '' };
+    });
+
+    const categoryResults = {};
+    items.forEach(item => {
+      if (!categoryResults[item.category]) {
+        categoryResults[item.category] = { items: [], pass: 0, fail: 0, warn: 0, total: 0 };
+      }
+      const cat = categoryResults[item.category];
+      cat.items.push(item);
+      cat.total++;
+      if (item.status === 'pass') cat.pass++;
+      else if (item.status === 'fail') cat.fail++;
+      else cat.warn++;
+    });
+
+    const totalRequired = items.filter(i => i.required);
+    const requiredPass = totalRequired.filter(i => i.status === 'pass').length;
+    const requiredFail = totalRequired.filter(i => i.status === 'fail').length;
+    const totalPass = items.filter(i => i.status === 'pass').length;
+
+    let overall;
+    if (requiredFail === 0) overall = 'pass';
+    else if (requiredFail <= 2) overall = 'warn';
+    else overall = 'fail';
+
+    return { items, categoryResults, overall, totalPass, totalItems: items.length, requiredPass, requiredTotal: totalRequired.length, requiredFail };
   }
 
   // ─── メインチェック実行 ────────────────────────
   async function check(apiKey, file, type, modelId) {
     const { images, pageCount } = await pdfToImages(file);
     const geminiResult = await callGemini(apiKey, images, type, modelId);
-    const aggregated = aggregateResults(geminiResult, type);
-    aggregated.pageCount = pageCount;
-    aggregated.analyzedPages = images.length;
-    return aggregated;
+
+    const nev = aggregateNevResults(geminiResult, type);
+    const manual = aggregateManualResults(geminiResult);
+
+    return {
+      nev,
+      manual,
+      wireTotals: geminiResult.wire_totals || [],
+      conduitTotals: geminiResult.conduit_totals || [],
+      overallComment: geminiResult.overall_comment || '',
+      detectedInfo: geminiResult.detected_info || {},
+      pageCount,
+      analyzedPages: images.length,
+    };
   }
 
   // ─── 結果テキスト出力 ──────────────────────────
   function resultToText(result, type) {
     const typeLabel = type === 'kiso' ? '基礎充電' : '目的地充電';
     let text = `=== NeV 配線ルート図 要件判定結果 ===\n`;
-    text += `図面タイプ: ${typeLabel}\n`;
-    text += `判定: ${result.overall === 'pass' ? '合格' : result.overall === 'warn' ? '要確認' : '不合格'}\n`;
-    text += `合格項目: ${result.totalPass} / ${result.totalItems}\n`;
-    text += `必須項目: ${result.requiredPass} / ${result.requiredTotal}\n\n`;
+    text += `図面タイプ: ${typeLabel}\n\n`;
 
-    const info = result.detectedInfo;
-    if (info) {
-      text += `--- 読み取り情報 ---\n`;
-      if (info.facility_name) text += `施設名: ${info.facility_name}\n`;
-      if (info.drawing_title) text += `図面名称: ${info.drawing_title}\n`;
-      if (info.creator) text += `作成者: ${info.creator}\n`;
-      if (info.scale) text += `縮尺: ${info.scale}\n`;
-      if (info.creation_date) text += `作成日: ${info.creation_date}\n`;
-      if (info.wire_type) text += `電線種類: ${info.wire_type}\n`;
-      if (info.total_length) text += `配線全長: ${info.total_length}\n`;
-      if (info.length_breakdown) text += `内訳: ${info.length_breakdown}\n`;
-      if (info.equipment_count) text += `EV充電設備: ${info.equipment_count}\n`;
-      text += '\n';
-    }
+    // NeV判定
+    const nev = result.nev;
+    text += `■ NeV要件判定: ${nev.overall === 'pass' ? '合格' : nev.overall === 'warn' ? '要確認' : '不合格'}\n`;
+    text += `  合格 ${nev.totalPass} / ${nev.totalItems} 項目（必須: ${nev.requiredPass} / ${nev.requiredTotal}）\n\n`;
 
-    text += `--- 項目別結果 ---\n`;
-    result.items.forEach(item => {
+    nev.items.forEach(item => {
       const icon = item.status === 'pass' ? '[OK]' : item.status === 'fail' ? '[NG]' : '[!?]';
       text += `${icon} ${item.label}${item.required ? '' : ' [任意]'}\n`;
       if (item.found_text) text += `    検出: ${item.found_text}\n`;
@@ -838,8 +639,62 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
       text += '\n';
     });
 
+    // マニュアル判定
+    const manual = result.manual;
+    text += `\n■ 作図センターマニュアル判定: ${manual.overall === 'pass' ? '合格' : manual.overall === 'warn' ? '要確認' : '不合格'}\n`;
+    text += `  合格 ${manual.totalPass} / ${manual.totalItems} 項目（必須: ${manual.requiredPass} / ${manual.requiredTotal}）\n\n`;
+
+    manual.items.forEach(item => {
+      const icon = item.status === 'pass' ? '[OK]' : item.status === 'fail' ? '[NG]' : '[!?]';
+      text += `${icon} ${item.label}${item.required ? '' : ' [任意]'}\n`;
+      if (item.found_text) text += `    検出: ${item.found_text}\n`;
+      if (item.detail) text += `    詳細: ${item.detail}\n`;
+      text += '\n';
+    });
+
+    // 配線集計
+    if (result.wireTotals && result.wireTotals.length > 0) {
+      text += `\n■ 配線（ケーブル）合計値\n`;
+      result.wireTotals.forEach(w => {
+        text += `  ${w.type}: ${w.total_length_m}m`;
+        const bd = w.breakdown;
+        if (bd) {
+          const parts = [];
+          if (bd.exposed_m) parts.push(`露出${bd.exposed_m}m`);
+          if (bd.in_conduit_m) parts.push(`管内${bd.in_conduit_m}m`);
+          if (bd.buried_m) parts.push(`埋設${bd.buried_m}m`);
+          if (bd.aerial_m) parts.push(`架空${bd.aerial_m}m`);
+          if (parts.length) text += ` （${parts.join(', ')}）`;
+        }
+        text += '\n';
+      });
+    }
+
+    if (result.conduitTotals && result.conduitTotals.length > 0) {
+      text += `\n■ 配管合計値\n`;
+      result.conduitTotals.forEach(c => {
+        text += `  ${c.type}: ${c.total_length_m}m`;
+        if (c.method) text += ` [${c.method}]`;
+        text += '\n';
+      });
+    }
+
+    // 読み取り情報
+    const info = result.detectedInfo;
+    if (info) {
+      text += `\n--- 読み取り情報 ---\n`;
+      if (info.facility_name) text += `施設名: ${info.facility_name}\n`;
+      if (info.drawing_title) text += `図面名称: ${info.drawing_title}\n`;
+      if (info.creator) text += `作成者: ${info.creator}\n`;
+      if (info.scale) text += `縮尺: ${info.scale}\n`;
+      if (info.creation_date) text += `作成日: ${info.creation_date}\n`;
+      if (info.wire_type) text += `電線種類: ${info.wire_type}\n`;
+      if (info.total_length) text += `配線全長: ${info.total_length}\n`;
+      if (info.equipment_count) text += `EV充電設備: ${info.equipment_count}\n`;
+    }
+
     if (result.overallComment) {
-      text += `--- AI コメント ---\n${result.overallComment}\n`;
+      text += `\n--- AI コメント ---\n${result.overallComment}\n`;
     }
 
     return text;
@@ -858,6 +713,7 @@ ${type === 'mokutekichi' ? `### 目的地充電の追加確認
     COMMON_CHECKS,
     KISO_CHECKS,
     MOKUTEKICHI_CHECKS,
+    MANUAL_CHECKS,
   };
 
 })();
