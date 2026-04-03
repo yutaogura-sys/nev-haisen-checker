@@ -487,6 +487,16 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       }
     }));
 
+    const useModel = modelId || 'gemini-2.5-flash';
+
+    // モデル別の最大出力トークン数
+    const maxTokensByModel = {
+      'gemini-2.5-pro':   65536,
+      'gemini-2.5-flash': 65536,
+      'gemini-2.0-flash': 8192,
+    };
+    const maxOutputTokens = maxTokensByModel[useModel] || 65536;
+
     const requestBody = {
       contents: [
         {
@@ -498,12 +508,10 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       ],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 12288,
+        maxOutputTokens,
         responseMimeType: "application/json",
       },
     };
-
-    const useModel = modelId || 'gemini-2.5-flash';
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent?key=${apiKey}`,
       {
