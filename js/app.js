@@ -476,6 +476,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // AIコメント
     els.aiComment.textContent = result.overallComment || '（コメントなし）';
+
+    // 料金概算
+    renderCostEstimate(result.costEstimate);
+  }
+
+  function renderCostEstimate(cost) {
+    const el = document.getElementById('costEstimate');
+    if (!el) return;
+    if (!cost) {
+      el.innerHTML = '';
+      el.style.display = 'none';
+      return;
+    }
+
+    const fmtNum = n => n.toLocaleString();
+
+    el.style.display = '';
+    el.innerHTML = `
+      <div class="cost-card">
+        <div class="cost-header">
+          <span class="cost-icon">&#128176;</span>
+          <span class="cost-title">Gemini API 料金目安（税別）</span>
+          <span class="cost-note">※ 概算値です。実際の請求額とは異なる場合があります</span>
+        </div>
+        <div class="cost-body">
+          <div class="cost-row">
+            <span class="cost-label">モデル</span>
+            <span class="cost-value">${escapeHtml(cost.model)}</span>
+          </div>
+          <div class="cost-row">
+            <span class="cost-label">入力トークン</span>
+            <span class="cost-value">${fmtNum(cost.inputTokens)} tokens（$${cost.inputCostUsd}）</span>
+          </div>
+          <div class="cost-row">
+            <span class="cost-label">出力トークン</span>
+            <span class="cost-value">${fmtNum(cost.outputTokens)} tokens（$${cost.outputCostUsd}）</span>
+          </div>
+          <div class="cost-row cost-total">
+            <span class="cost-label">合計（概算）</span>
+            <span class="cost-value"><strong>$${cost.totalCostUsd}</strong>（約 <strong>${cost.totalCostJpy}円</strong>）</span>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function renderOverallBadge(el, data) {

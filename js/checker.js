@@ -612,8 +612,14 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       jsonStr = codeBlockMatch[1];
     }
 
+    // トークン使用量を取得
+    const usageMetadata = data.usageMetadata || {};
+
     try {
-      return JSON.parse(jsonStr.trim());
+      const parsed = JSON.parse(jsonStr.trim());
+      parsed._usageMetadata = usageMetadata;
+      parsed._model = useModel;
+      return parsed;
     } catch (parseErr) {
       console.error('Gemini応答のJSONパースに失敗:', text.substring(0, 500));
 
@@ -759,6 +765,42 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       detectedInfo: geminiResult.detected_info || {},
       pageCount,
       analyzedPages: images.length,
+      costEstimate: estimateCost(geminiResult._usageMetadata, geminiResult._model),
+    };
+  }
+
+  // ─── 料金概算 ─────────────────────────────────
+  // 単位: USD per 1M tokens（2025年4月時点の参考価格）
+  const PRICING = {
+    'gemini-2.5-pro':   { input: 1.25, output: 10.00, label: 'Gemini 2.5 Pro' },
+    'gemini-2.5-flash': { input: 0.15, output: 0.60,  label: 'Gemini 2.5 Flash' },
+    'gemini-2.0-flash': { input: 0.10, output: 0.40,  label: 'Gemini 2.0 Flash' },
+  };
+
+  function estimateCost(usage, modelId) {
+    if (!usage) return null;
+    const pricing = PRICING[modelId] || PRICING['gemini-2.5-flash'];
+    const inputTokens = usage.promptTokenCount || 0;
+    const outputTokens = usage.candidatesTokenCount || 0;
+    const totalTokens = usage.totalTokenCount || (inputTokens + outputTokens);
+
+    const inputCostUsd = (inputTokens / 1_000_000) * pricing.input;
+    const outputCostUsd = (outputTokens / 1_000_000) * pricing.output;
+    const totalCostUsd = inputCostUsd + outputCostUsd;
+
+    // USD → JPY 概算（1 USD ≈ 150 JPY）
+    const rate = 150;
+    const totalCostJpy = totalCostUsd * rate;
+
+    return {
+      model: pricing.label,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      inputCostUsd: Math.round(inputCostUsd * 10000) / 10000,
+      outputCostUsd: Math.round(outputCostUsd * 10000) / 10000,
+      totalCostUsd: Math.round(totalCostUsd * 10000) / 10000,
+      totalCostJpy: Math.round(totalCostJpy * 100) / 100,
     };
   }
 

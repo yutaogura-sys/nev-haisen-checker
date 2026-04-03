@@ -1540,3 +1540,77 @@ details[open] > .guide-toggle::before {
     padding: 6px 6px;
   }
 }
+
+/* --- 料金概算 --- */
+.cost-card {
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-top: 16px;
+}
+
+.cost-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.cost-icon {
+  font-size: 18px;
+}
+
+.cost-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-700);
+}
+
+.cost-note {
+  font-size: 10px;
+  color: var(--gray-400);
+  margin-left: auto;
+}
+
+.cost-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cost-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.cost-label {
+  color: var(--gray-500);
+  min-width: 100px;
+}
+
+.cost-value {
+  color: var(--gray-700);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-row.cost-total {
+  border-top: 1px solid var(--gray-200);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.cost-row.cost-total .cost-label {
+  font-weight: 600;
+  color: var(--gray-700);
+}
+
+.cost-row.cost-total .cost-value {
+  font-size: 13px;
+  color: var(--primary);
+}
