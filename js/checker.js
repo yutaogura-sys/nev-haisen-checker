@@ -488,7 +488,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
   async function verifyModel(apiKey, modelId) {
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${modelId}?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1/models/${modelId}?key=${apiKey}`,
         { method: 'GET' }
       );
       if (!response.ok) {
@@ -546,7 +546,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       },
     };
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1/models/${useModel}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -671,7 +671,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
   // ─── API キー検証 ─────────────────────────────
   async function verifyApiKey(apiKey) {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
       { method: 'GET' }
     );
     return response.ok;
