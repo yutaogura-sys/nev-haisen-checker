@@ -227,9 +227,9 @@ ${nevCheckListText}
 ### マニュアルチェック項目
 ${manualCheckListText}
 
-## 【Part 3】配線・配管 種別ごとの合計値算出（2つのソースから）
+## 【Part 3】配線・配管 種別ごとの合計値算出（3つのソースから）
 
-配線と配管について、**2つのソース**からそれぞれ種別ごとの合計長さを算出してください：
+配線と配管について、**3つのソース**からそれぞれ種別ごとの合計長さを算出してください：
 
 ### ソース1: 統括表（配線集計表）の記載値
 図面内に統括表（配線集計表）がある場合、その表に記載されている数値をそのまま読み取ってください。
@@ -253,6 +253,12 @@ ${manualCheckListText}
 
 旗上げを全て読み取った上で、ケーブル種別・配管種別ごとに合算した値も算出してください。
 
+### ソース3: 記載線長（配線ルート線に沿った寸法値の実測）
+配線ルート線に沿って描かれた**寸法線（引出し線・矢印付きの距離表示）**を読み取ってください。
+旗上げ注記とは別に、ルート線自体に付された距離情報（寸法値）です。
+図面の縮尺を考慮し、各区間の寸法値をケーブル種別・配管種別ごとに合算してください。
+寸法線がない場合や旗上げと完全に同一の場合は、旗上げと同じ値を入れてください。
+
 ### 対象の配線（ケーブル）種別例
 CVT8sq、CVT14sq、CVT22sq、CVT38sq、CVT60sq、CVT100sq、CV5.5-3C、CV5sq-3C、CV8sq-3C、CV14sq-3C、CV22sq-3C、CV38sq-3C、CV60sq-3C、CV100sq-3C、VVF2mm-2C、VVF2mm-3C、IV5.5sq 等
 
@@ -261,7 +267,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
 ### 重要
 - 旗上げは**1つも漏らさず**全て読み取ってください。読み落としは集計の食い違いの原因になります
-- 統括表の値と旗上げの合計が一致しない場合でも、それぞれの数値をそのまま報告してください
+- 統括表・旗上げ・記載線長の値が一致しない場合でも、それぞれの数値をそのまま報告してください
 - 「EV充電設備用分電盤内部配線」「EV充電設備用分電盤〜配管端部」等の特殊区間も忘れずに読み取ってください
 
 ## 回答フォーマット（厳密にこのJSON形式で返してください）
@@ -315,6 +321,18 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       "method": "露出 | 埋設 | 架空"
     }
   ],
+  "drawn_wire_lengths": [
+    {
+      "type": "ケーブル種別（例: CVT22sq）",
+      "total_length_m": 数値
+    }
+  ],
+  "drawn_conduit_lengths": [
+    {
+      "type": "配管種別（例: PFD-28）",
+      "total_length_m": 数値
+    }
+  ],
   "flagged_annotations": [
     {
       "cable_type": "ケーブル種別（例: CV8sq-3C）",
@@ -358,7 +376,8 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 - 「該当する場合のみ」の項目は、該当しない場合は **pass** としてください
 - found_text には図面から読み取れた具体的なテキスト・数値を記載（推測不可）
 - table_wire_totals / table_conduit_totals は統括表の記載値。統括表がない場合は空配列 []
-- counted_wire_totals / counted_conduit_totals は図面注記から実際にカウントした合計値。読み取れない場合は空配列 []
+- counted_wire_totals / counted_conduit_totals は旗上げ注記から合算した値。読み取れない場合は空配列 []
+- drawn_wire_lengths / drawn_conduit_lengths は配線ルート線の寸法値から実測した値。寸法線がない場合は旗上げと同じ値を入れるか空配列 []
 - 全てのチェック項目について必ず結果を返してください（スキップ不可）`;
   }
 
@@ -733,6 +752,8 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       tableConduitTotals: geminiResult.table_conduit_totals || [],
       countedWireTotals: geminiResult.counted_wire_totals || [],
       countedConduitTotals: geminiResult.counted_conduit_totals || [],
+      drawnWireLengths: geminiResult.drawn_wire_lengths || [],
+      drawnConduitLengths: geminiResult.drawn_conduit_lengths || [],
       flaggedAnnotations: geminiResult.flagged_annotations || [],
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
@@ -807,6 +828,16 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
         if (c.method) text += ` [${c.method}]`;
         text += '\n';
       });
+    }
+
+    // 記載線長
+    if (result.drawnWireLengths && result.drawnWireLengths.length > 0) {
+      text += `\n■ 記載線長 — 配線\n`;
+      result.drawnWireLengths.forEach(w => { text += `  ${w.type}: ${w.total_length_m}m\n`; });
+    }
+    if (result.drawnConduitLengths && result.drawnConduitLengths.length > 0) {
+      text += `\n■ 記載線長 — 配管\n`;
+      result.drawnConduitLengths.forEach(c => { text += `  ${c.type}: ${c.total_length_m}m\n`; });
     }
 
     // 旗上げ一覧

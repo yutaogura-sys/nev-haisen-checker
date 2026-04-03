@@ -195,44 +195,26 @@
           <div class="detected-info" id="detectedInfo"></div>
         </div>
 
-        <!-- 配線・配管 合計値（統括表 vs 実カウント） -->
+        <!-- 3ソース比較: 統括表 vs 旗上げ vs 記載線長 -->
         <div class="totals-section" id="totalsSection">
-          <h3 class="totals-section-title">&#128202; 配線・配管 集計</h3>
-          <p class="totals-section-desc">統括表の記載値と、図面注記から実際にカウントした値を比較できます。差異がある箇所は赤で表示されます。</p>
+          <h3 class="totals-section-title">&#128202; 配線・配管 3ソース比較</h3>
+          <p class="totals-section-desc">①統括表（集計表の記載値）②旗上げ（緑注記の合算）③記載線長（寸法値の実測）を並列比較します。差異がある箇所はハイライトされます。</p>
 
           <div class="totals-group">
-            <h4 class="totals-group-title">&#128268; 配線（ケーブル）</h4>
-            <div class="totals-grid">
-              <div class="totals-card">
-                <div class="totals-card-header table-source">統括表の記載値</div>
-                <div class="totals-table-wrap" id="tableWireTotals"></div>
-              </div>
-              <div class="totals-card">
-                <div class="totals-card-header count-source">注記からの実カウント</div>
-                <div class="totals-table-wrap" id="countedWireTotals"></div>
-              </div>
-            </div>
+            <h4 class="totals-group-title">&#128268; 配線（ケーブル）比較</h4>
+            <div class="compare-table-wrap" id="compareWireTable"></div>
           </div>
 
           <div class="totals-group">
-            <h4 class="totals-group-title">&#128295; 配管</h4>
-            <div class="totals-grid">
-              <div class="totals-card">
-                <div class="totals-card-header table-source">統括表の記載値</div>
-                <div class="totals-table-wrap" id="tableConduitTotals"></div>
-              </div>
-              <div class="totals-card">
-                <div class="totals-card-header count-source">注記からの実カウント</div>
-                <div class="totals-table-wrap" id="countedConduitTotals"></div>
-              </div>
-            </div>
+            <h4 class="totals-group-title">&#128295; 配管 比較</h4>
+            <div class="compare-table-wrap" id="compareConduitTable"></div>
           </div>
         </div>
 
-        <!-- 旗上げ整合チェック -->
+        <!-- 旗上げ詳細一覧 -->
         <div class="annotations-section" id="annotationsSection">
-          <h3 class="totals-section-title">&#127988; 旗上げ整合チェック</h3>
-          <p class="totals-section-desc">各区間の旗上げ（緑色注記）を全て読み取り、種別ごとに合計して統括表と比較します。</p>
+          <h3 class="totals-section-title">&#127988; 旗上げ詳細一覧</h3>
+          <p class="totals-section-desc">各区間の旗上げ（緑色注記）を全て読み取り、種別ごとにリスト表示します。</p>
           <div id="annotationsContent"></div>
         </div>
 

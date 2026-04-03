@@ -52,11 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
     tabManualBadge:    $('tabManualBadge'),
     nevContent:        $('nevContent'),
     manualContent:     $('manualContent'),
-    // 集計（4テーブル: 統括表×2 + 実カウント×2）
-    tableWireTotals:   $('tableWireTotals'),
-    tableConduitTotals:$('tableConduitTotals'),
-    countedWireTotals: $('countedWireTotals'),
-    countedConduitTotals:$('countedConduitTotals'),
+    // 3ソース比較テーブル
+    compareWireTable:  $('compareWireTable'),
+    compareConduitTable:$('compareConduitTable'),
     // 旗上げ
     annotationsContent:$('annotationsContent'),
     // その他
@@ -454,13 +452,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // 読み取り情報
     renderDetectedInfo(result.detectedInfo);
 
-    // 配線・配管集計（統括表 vs 実カウント）
-    renderSimpleTotals(els.tableWireTotals, result.tableWireTotals, 'wire');
-    renderSimpleTotals(els.tableConduitTotals, result.tableConduitTotals, 'conduit');
-    renderCountedWireTotals(els.countedWireTotals, result.countedWireTotals, result.tableWireTotals);
-    renderCountedConduitTotals(els.countedConduitTotals, result.countedConduitTotals, result.tableConduitTotals);
+    // 3ソース比較テーブル
+    renderCompareTable(els.compareWireTable, 'wire', result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths);
+    renderCompareTable(els.compareConduitTable, 'conduit', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths);
 
-    // 旗上げ整合チェック
+    // 旗上げ詳細一覧
     renderAnnotationsCheck(result.flaggedAnnotations, result.tableWireTotals, result.tableConduitTotals);
 
     // NeV判定
@@ -552,91 +548,90 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ─── 配線・配管集計テーブル描画 ─────────────────
+  // ─── 3ソース比較テーブル描画 ─────────────────────
 
   function formatNum(val) {
     if (val === undefined || val === null || val === 0 || val === '') return '-';
     return val + 'm';
   }
 
-  // 統括表の記載値（シンプルテーブル）
-  function renderSimpleTotals(el, data, kind) {
-    if (!data || data.length === 0) {
-      el.innerHTML = '<p class="totals-empty">統括表に記載なし / 読み取れませんでした</p>';
-      return;
-    }
-    const label = kind === 'wire' ? '種別' : '種別';
-    let html = '<table class="totals-table"><thead><tr>';
-    html += `<th>${label}</th><th>合計</th>`;
-    html += '</tr></thead><tbody>';
-    data.forEach(item => {
-      html += `<tr><td class="type-cell">${escapeHtml(item.type)}</td>`;
-      html += `<td class="num-cell"><strong>${formatNum(item.total_length_m)}</strong></td></tr>`;
-    });
-    html += '</tbody></table>';
-    el.innerHTML = html;
-  }
+  function renderCompareTable(el, kind, tableData, countedData, drawnData) {
+    // 全ソースから種別を収集
+    const allTypes = new Set();
+    if (tableData) tableData.forEach(t => allTypes.add(t.type));
+    if (countedData) countedData.forEach(t => allTypes.add(t.type));
+    if (drawnData) drawnData.forEach(t => allTypes.add(t.type));
 
-  // 注記カウント値（配線、差異ハイライト付き）
-  function renderCountedWireTotals(el, countedData, tableData) {
-    if (!countedData || countedData.length === 0) {
-      el.innerHTML = '<p class="totals-empty">注記から配線データを読み取れませんでした</p>';
+    if (allTypes.size === 0) {
+      el.innerHTML = '<p class="totals-empty">データを読み取れませんでした</p>';
       return;
     }
 
-    // 統括表の値をMapに変換（差異検出用）
+    // Mapに変換
     const tableMap = {};
     if (tableData) tableData.forEach(t => { tableMap[t.type] = t.total_length_m; });
+    const countedMap = {};
+    if (countedData) countedData.forEach(t => { countedMap[t.type] = t.total_length_m; });
+    const drawnMap = {};
+    if (drawnData) drawnData.forEach(t => { drawnMap[t.type] = t.total_length_m; });
 
-    let html = '<table class="totals-table"><thead><tr>';
-    html += '<th>種別</th><th>合計</th><th>露出</th><th>管内</th><th>埋設</th><th>架空</th>';
+    let html = '<table class="compare-table"><thead><tr>';
+    html += '<th>種別</th>';
+    html += '<th class="col-table">&#9312; 統括表</th>';
+    html += '<th class="col-flag">&#9313; 旗上げ合計</th>';
+    html += '<th class="col-drawn">&#9314; 記載線長</th>';
+    html += '<th class="col-status">判定</th>';
     html += '</tr></thead><tbody>';
 
-    countedData.forEach(w => {
-      const bd = w.breakdown || {};
-      const tableVal = tableMap[w.type];
-      const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== w.total_length_m;
-      const diffClass = hasDiff ? ' class="diff-cell"' : '';
-      const diffNote = hasDiff ? ` <span class="diff-marker" title="統括表: ${tableVal}m">(!)</span>` : '';
+    Array.from(allTypes).forEach(type => {
+      const tv = tableMap[type];
+      const fv = countedMap[type];
+      const dv = drawnMap[type];
+
+      // 3値の一致判定
+      const vals = [tv, fv, dv].filter(v => v !== undefined && v !== null);
+      const allMatch = vals.length >= 2 && vals.every(v => v === vals[0]);
+      const hasAnyDiff = vals.length >= 2 && !allMatch;
+
+      // 個別差異
+      const tvStr = tv !== undefined && tv !== null ? tv + 'm' : '-';
+      const fvStr = fv !== undefined && fv !== null ? fv + 'm' : '-';
+      const dvStr = dv !== undefined && dv !== null ? dv + 'm' : '-';
+
+      const diffCell = (val, ref) => {
+        if (val === undefined || val === null || ref === undefined || ref === null) return '';
+        if (val !== ref) return ' diff-cell';
+        return '';
+      };
 
       html += '<tr>';
-      html += `<td class="type-cell">${escapeHtml(w.type)}</td>`;
-      html += `<td class="num-cell"${diffClass}><strong>${formatNum(w.total_length_m)}</strong>${diffNote}</td>`;
-      html += `<td class="num-cell">${formatNum(bd.exposed_m)}</td>`;
-      html += `<td class="num-cell">${formatNum(bd.in_conduit_m)}</td>`;
-      html += `<td class="num-cell">${formatNum(bd.buried_m)}</td>`;
-      html += `<td class="num-cell">${formatNum(bd.aerial_m)}</td>`;
-      html += '</tr>';
-    });
+      html += `<td class="type-cell">${escapeHtml(type)}</td>`;
+      html += `<td class="num-cell">${tvStr}</td>`;
+      html += `<td class="num-cell${diffCell(fv, tv)}">${fvStr}</td>`;
+      html += `<td class="num-cell${diffCell(dv, tv)}">${dvStr}</td>`;
 
-    html += '</tbody></table>';
-    el.innerHTML = html;
-  }
+      if (allMatch) {
+        html += `<td class="status-cell"><span class="match-badge">一致</span></td>`;
+      } else if (hasAnyDiff) {
+        const diffs = [];
+        if (tv !== undefined && fv !== undefined && tv !== fv) {
+          diffs.push(`①②差 ${fv - tv > 0 ? '+' : ''}${Math.round((fv - tv) * 10) / 10}m`);
+        }
+        if (tv !== undefined && dv !== undefined && tv !== dv) {
+          diffs.push(`①③差 ${dv - tv > 0 ? '+' : ''}${Math.round((dv - tv) * 10) / 10}m`);
+        }
+        if (fv !== undefined && dv !== undefined && fv !== dv) {
+          diffs.push(`②③差 ${dv - fv > 0 ? '+' : ''}${Math.round((dv - fv) * 10) / 10}m`);
+        }
+        html += `<td class="status-cell"><span class="diff-badge">${escapeHtml(diffs[0] || '差異あり')}</span>`;
+        if (diffs.length > 1) {
+          html += `<span class="diff-sub">${escapeHtml(diffs.slice(1).join(' / '))}</span>`;
+        }
+        html += `</td>`;
+      } else {
+        html += `<td class="status-cell"><span style="color:var(--gray-400);font-size:11px;">データ不足</span></td>`;
+      }
 
-  // 注記カウント値（配管、差異ハイライト付き）
-  function renderCountedConduitTotals(el, countedData, tableData) {
-    if (!countedData || countedData.length === 0) {
-      el.innerHTML = '<p class="totals-empty">注記から配管データを読み取れませんでした</p>';
-      return;
-    }
-
-    const tableMap = {};
-    if (tableData) tableData.forEach(t => { tableMap[t.type] = t.total_length_m; });
-
-    let html = '<table class="totals-table"><thead><tr>';
-    html += '<th>種別</th><th>合計</th><th>配線方法</th>';
-    html += '</tr></thead><tbody>';
-
-    countedData.forEach(c => {
-      const tableVal = tableMap[c.type];
-      const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== c.total_length_m;
-      const diffClass = hasDiff ? ' class="diff-cell"' : '';
-      const diffNote = hasDiff ? ` <span class="diff-marker" title="統括表: ${tableVal}m">(!)</span>` : '';
-
-      html += '<tr>';
-      html += `<td class="type-cell">${escapeHtml(c.type)}</td>`;
-      html += `<td class="num-cell"${diffClass}><strong>${formatNum(c.total_length_m)}</strong>${diffNote}</td>`;
-      html += `<td>${escapeHtml(c.method || '-')}</td>`;
       html += '</tr>';
     });
 
