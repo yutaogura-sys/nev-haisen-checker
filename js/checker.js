@@ -515,7 +515,39 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
-      throw new Error(errData?.error?.message || `API エラー (${response.status})`);
+      const errMsg = errData?.error?.message || '';
+      const status = response.status;
+
+      // クォータ超過（429）の検知と分類
+      if (status === 429 || errMsg.includes('Quota exceeded') || errMsg.includes('quota')) {
+        const isFreeTier = errMsg.includes('free_tier');
+        const retryMatch = errMsg.match(/retry in ([\d.]+)s/i);
+        const retrySec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : null;
+
+        const err = new Error(
+          isFreeTier
+            ? `【無料枠クォータ超過】モデル「${useModel}」の無料枠が上限に達しました。`
+            : `【レート制限】モデル「${useModel}」のリクエスト制限に達しました。`
+        );
+        err.type = 'quota_exceeded';
+        err.isFreeTier = isFreeTier;
+        err.model = useModel;
+        err.retryAfterSec = retrySec;
+        err.suggestions = [];
+        if (isFreeTier) {
+          err.suggestions.push('Google AI Studio の課金設定で「有料枠（Pay-as-you-go）」を有効にしてください');
+          err.suggestions.push('https://aistudio.google.com/apikey でAPIキーの課金設定を確認');
+        }
+        if (useModel.includes('pro')) {
+          err.suggestions.push('Gemini 2.5 Flash や 2.0 Flash に切り替えると制限が緩和されます');
+        }
+        if (retrySec) {
+          err.suggestions.push(`約${retrySec}秒後に再試行可能です`);
+        }
+        throw err;
+      }
+
+      throw new Error(errMsg || `API エラー (${status})`);
     }
 
     const data = await response.json();

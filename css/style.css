@@ -1347,3 +1347,111 @@ details[open] > .guide-toggle::before {
   padding: 5px 8px;
   font-size: 12px;
 }
+
+/* --- エラー表示 --- */
+.error-card {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 16px;
+}
+
+.error-card.quota-error {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+}
+
+.error-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.error-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.error-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-800);
+}
+
+.error-detail {
+  margin: 12px 0;
+  padding: 12px 16px;
+  background: rgba(255,255,255,0.7);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--gray-700);
+}
+
+.error-detail p + p {
+  margin-top: 8px;
+}
+
+.error-suggestions {
+  margin: 12px 0;
+}
+
+.error-suggestions-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gray-700);
+  margin-bottom: 6px;
+}
+
+.error-suggestions ul {
+  list-style: none;
+  padding: 0;
+}
+
+.error-suggestions li {
+  font-size: 13px;
+  color: var(--gray-600);
+  padding: 4px 0 4px 20px;
+  position: relative;
+}
+
+.error-suggestions li::before {
+  content: '\25B6';
+  position: absolute;
+  left: 0;
+  color: var(--warning);
+  font-size: 10px;
+  top: 7px;
+}
+
+.error-suggestions a {
+  color: var(--primary);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.error-retry {
+  margin-top: 16px;
+  text-align: right;
+}
+
+.btn-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  background: var(--gray-100);
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gray-700);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.btn-retry:hover {
+  background: var(--gray-200);
+}

@@ -312,6 +312,72 @@ document.addEventListener('DOMContentLoaded', () => {
     els.manualContent.classList.toggle('active', tab === 'manual');
   }
 
+  // ─── エラー表示 ───────────────────────────────
+  function showError(err) {
+    const container = document.getElementById('errorSection');
+    if (!container) {
+      alert('チェック中にエラーが発生しました:\n\n' + err.message);
+      return;
+    }
+
+    let html = '';
+
+    if (err.type === 'quota_exceeded') {
+      html += `<div class="error-card quota-error">`;
+      html += `<div class="error-header">`;
+      html += `<span class="error-icon">&#9888;&#65039;</span>`;
+      html += `<span class="error-title">${escapeHtml(err.message)}</span>`;
+      html += `</div>`;
+
+      if (err.isFreeTier) {
+        html += `<div class="error-detail">`;
+        html += `<p>Gemini API の<strong>無料枠（Free Tier）</strong>が上限に達しました。有料契約済みの場合でも、無料枠が優先消費されます。</p>`;
+        html += `<p>有料枠（Pay-as-you-go）を利用するには、APIキーに課金設定を紐づける必要があります。</p>`;
+        html += `</div>`;
+      }
+
+      if (err.suggestions && err.suggestions.length > 0) {
+        html += `<div class="error-suggestions">`;
+        html += `<div class="error-suggestions-title">対処方法:</div>`;
+        html += `<ul>`;
+        err.suggestions.forEach(s => {
+          if (s.startsWith('http')) {
+            html += `<li><a href="${escapeHtml(s)}" target="_blank" rel="noopener">${escapeHtml(s)}</a></li>`;
+          } else {
+            html += `<li>${escapeHtml(s)}</li>`;
+          }
+        });
+        html += `</ul>`;
+      html += `</div>`;
+      }
+
+      if (err.retryAfterSec) {
+        html += `<div class="error-retry">`;
+        html += `<button class="btn btn-retry" onclick="this.closest('.error-card').remove()">`;
+        html += `&#128260; 閉じて再試行</button>`;
+        html += `</div>`;
+      }
+
+      html += `</div>`;
+    } else {
+      html += `<div class="error-card general-error">`;
+      html += `<div class="error-header">`;
+      html += `<span class="error-icon">&#10060;</span>`;
+      html += `<span class="error-title">チェック中にエラーが発生しました</span>`;
+      html += `</div>`;
+      html += `<div class="error-detail"><p>${escapeHtml(err.message)}</p></div>`;
+      html += `<div class="error-retry">`;
+      html += `<button class="btn btn-retry" onclick="this.closest('.error-card').remove()">`;
+      html += `&#128260; 閉じる</button>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    container.innerHTML = html;
+    container.style.display = '';
+    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   // ─── チェック実行 ─────────────────────────────
   let lastResult = null;
   let isChecking = false;
@@ -329,6 +395,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setCheckingState(true);
     els.resultSection.style.display = 'none';
     els.loadingSection.style.display = '';
+    const errSec = document.getElementById('errorSection');
+    if (errSec) { errSec.style.display = 'none'; errSec.innerHTML = ''; }
 
     els.loadingSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
@@ -339,7 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       els.loadingSection.style.display = 'none';
       setCheckingState(false);
-      alert('チェック中にエラーが発生しました:\n\n' + e.message);
+      showError(e);
       return;
     }
 
