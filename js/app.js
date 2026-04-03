@@ -359,6 +359,33 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       html += `</div>`;
+    } else if (err.type === 'parse_error') {
+      html += `<div class="error-card quota-error">`;
+      html += `<div class="error-header">`;
+      html += `<span class="error-icon">&#9888;&#65039;</span>`;
+      html += `<span class="error-title">Gemini の応答を解析できませんでした</span>`;
+      html += `</div>`;
+
+      // メッセージを改行で分割して表示
+      const lines = err.message.split('\n').filter(l => l.trim());
+      html += `<div class="error-detail">`;
+      lines.forEach(line => { html += `<p>${escapeHtml(line)}</p>`; });
+      if (err.model) {
+        html += `<p>使用モデル: <strong>${escapeHtml(err.model)}</strong></p>`;
+      }
+      if (err.finishReason) {
+        html += `<p>終了理由: <code>${escapeHtml(err.finishReason)}</code></p>`;
+      }
+      if (err.responsePreview) {
+        html += `<p style="margin-top:8px;font-size:11px;color:var(--gray-400);">応答冒頭: ${escapeHtml(err.responsePreview)}</p>`;
+      }
+      html += `</div>`;
+
+      html += `<div class="error-retry">`;
+      html += `<button class="btn btn-retry" onclick="this.closest('.error-card').remove()">`;
+      html += `&#128260; 閉じて再試行</button>`;
+      html += `</div>`;
+      html += `</div>`;
     } else {
       html += `<div class="error-card general-error">`;
       html += `<div class="error-header">`;

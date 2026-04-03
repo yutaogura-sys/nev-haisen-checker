@@ -561,7 +561,9 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     }
 
     const candidate = data.candidates[0];
-    if (candidate.finishReason === 'SAFETY') {
+    const finishReason = candidate.finishReason || '';
+
+    if (finishReason === 'SAFETY') {
       throw new Error('Gemini の安全フィルタにより応答がブロックされました。');
     }
 
@@ -587,7 +589,35 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       return JSON.parse(jsonStr.trim());
     } catch (parseErr) {
       console.error('Gemini応答のJSONパースに失敗:', text.substring(0, 500));
-      throw new Error('Gemini の応答を解析できませんでした。再試行してください。');
+
+      // 原因を診断してユーザーに詳細を伝える
+      let reason = '';
+      if (finishReason === 'MAX_TOKENS') {
+        reason = '原因: 応答がトークン上限に達し、JSONが途中で切れました。';
+      } else if (finishReason === 'RECITATION') {
+        reason = '原因: Gemini が応答を途中で停止しました（RECITATION）。';
+      } else if (text.length < 100) {
+        reason = '原因: Gemini の応答が極端に短く、有効なJSONが含まれていません。';
+      } else if (!text.includes('{')) {
+        reason = '原因: Gemini がJSON形式ではなくテキスト形式で応答しました。';
+      } else {
+        reason = '原因: Gemini の応答に不正なJSON構文が含まれていました。';
+      }
+
+      const suggestion = finishReason === 'MAX_TOKENS'
+        ? 'ページ数の少ないPDFで再試行するか、別のモデルをお試しください。'
+        : 'もう一度チェックを実行してください。繰り返す場合はモデルを変更してください。';
+
+      const preview = text.substring(0, 200).replace(/\n/g, ' ');
+
+      const err = new Error(
+        `Gemini の応答を解析できませんでした。\n${reason}\n${suggestion}`
+      );
+      err.type = 'parse_error';
+      err.finishReason = finishReason;
+      err.model = useModel;
+      err.responsePreview = preview;
+      throw err;
     }
   }
 
