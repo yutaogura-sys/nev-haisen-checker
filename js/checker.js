@@ -502,11 +502,63 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     }
   }
 
+  // ─── 有料キー判定（Proに軽量リクエストを送りクォータを確認）───
+  async function checkPaidTier(apiKey) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: 'Say "ok"' }] }],
+            generationConfig: { temperature: 0, maxOutputTokens: 1 },
+          }),
+        }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        const msg = data?.error?.message || '';
+        // 無料枠クォータ超過 → 無料キー
+        if (response.status === 429 && msg.includes('free_tier')) {
+          return false;
+        }
+        // 403 で free tier 関連 → 無料キー
+        if (response.status === 403 && (msg.includes('free_tier') || msg.includes('billing'))) {
+          return false;
+        }
+      }
+      // 200 OK or その他のエラー（レート制限等）→ 有料キーとみなす
+      return true;
+    } catch (e) {
+      // ネットワークエラー等 → 判定不能、有料扱い（実行時に判明する）
+      return true;
+    }
+  }
+
   async function verifyAllModels(apiKey) {
     const results = {};
+
+    // まず全モデルの基本接続テスト（並列）
     await Promise.all(MODELS.map(async (model) => {
       results[model.id] = await verifyModel(apiKey, model.id);
     }));
+
+    // 有料キーかどうか判定
+    const isPaid = await checkPaidTier(apiKey);
+
+    // 無料キーの場合、有料モデル(Pro)を利用不可にする
+    if (!isPaid) {
+      MODELS.forEach(model => {
+        if (model.tier === 'paid' && results[model.id]?.available) {
+          results[model.id] = {
+            available: false,
+            reason: '有料プランが必要です。Google AI Studio で課金を有効にしてください。',
+          };
+        }
+      });
+    }
+
     return results;
   }
 

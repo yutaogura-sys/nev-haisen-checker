@@ -369,6 +369,13 @@ details[open] > .guide-toggle::before {
   color: var(--gray-400);
 }
 
+.model-option input[type="radio"]:disabled + .model-card {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: var(--gray-200);
+  background: var(--gray-100);
+}
+
 .checkbox-label {
   display: flex;
   align-items: center;

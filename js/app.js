@@ -201,17 +201,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const results = await DrawingChecker.verifyAllModels(apiKey);
 
+    // 現在選択中のモデルが利用不可なら自動切替
+    const selectedRadio = document.querySelector('input[name="geminiModel"]:checked');
+    const selectedModel = selectedRadio ? selectedRadio.value : '';
+    let needSwitch = false;
+    if (results[selectedModel] && !results[selectedModel].available) {
+      needSwitch = true;
+    }
+
     DrawingChecker.MODELS.forEach(model => {
       const el = document.getElementById('status-' + model.id);
       if (!el) return;
       const r = results[model.id];
+      const radio = document.querySelector(`input[name="geminiModel"][value="${model.id}"]`);
       if (r && r.available) {
         el.textContent = '\u2713 利用可能';
         el.className = 'model-status available';
+        if (radio) radio.disabled = false;
+        // 利用不可だった選択モデルの自動切替先（最初に見つかった利用可能モデル）
+        if (needSwitch) {
+          radio.checked = true;
+          needSwitch = false;
+        }
       } else {
-        el.textContent = '\u2717 利用不可';
+        el.textContent = '\u2717 ' + (r?.reason || '利用不可');
         el.className = 'model-status unavailable';
         el.title = r ? r.reason : '';
+        if (radio) radio.disabled = true;
       }
     });
   }
