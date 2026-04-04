@@ -283,6 +283,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 - 「EV充電設備用分電盤内部配線」「EV充電設備用分電盤〜配管端部」等の特殊区間も忘れずに読み取ってください
 
 ## 回答フォーマット（厳密にこのJSON形式で返してください）
+**重要: 回答はJSON以外のテキストを含めず、以下のJSON構造のみを返してください。コードフェンス（\`\`\`json ... \`\`\`）で囲んでも構いません。**
 
 \`\`\`json
 {
@@ -542,11 +543,10 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       generationConfig: {
         temperature: 0.1,
         maxOutputTokens,
-        responseMimeType: "application/json",
       },
     };
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/${useModel}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
