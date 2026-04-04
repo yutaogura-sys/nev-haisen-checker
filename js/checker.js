@@ -465,17 +465,23 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
   // ─── プレビュー用画像生成 ──────────────────────
   async function pdfToPreview(file) {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    const page = await pdf.getPage(1);
-    const safeScale = calcSafeScale(page, 1.5);
-    const viewport = page.getViewport({ scale: safeScale });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
-    const ctx = canvas.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport }).promise;
-    return canvas;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const page = await pdf.getPage(1);
+      const safeScale = calcSafeScale(page, 1.5);
+      const viewport = page.getViewport({ scale: safeScale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas context の取得に失敗しました');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      return canvas;
+    } catch (e) {
+      console.error('プレビュー生成エラー:', e);
+      return null;
+    }
   }
 
   // ─── 利用可能モデル定義 ─────────────────────────
@@ -527,8 +533,20 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
         if (response.status === 403 && (msg.includes('free_tier') || msg.includes('billing'))) {
           return false;
         }
+        // サーバーエラー(500/503等) → 判定不能、有料扱い（実行時に判明する）
+        if (response.status >= 500) {
+          return true;
+        }
+        // 429 で free_tier 以外（有料枠のレート制限） → 有料キー
+        if (response.status === 429) {
+          return true;
+        }
+        // その他のエラー（400等）→ 無料キーの可能性が高い
+        if (msg.includes('free') || msg.includes('quota') || msg.includes('billing')) {
+          return false;
+        }
       }
-      // 200 OK or その他のエラー（レート制限等）→ 有料キーとみなす
+      // 200 OK → 有料キー確定
       return true;
     } catch (e) {
       // ネットワークエラー等 → 判定不能、有料扱い（実行時に判明する）
@@ -597,14 +615,19 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
         maxOutputTokens,
       },
     };
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      }
-    );
+    let response;
+    try {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        }
+      );
+    } catch (networkErr) {
+      throw new Error('ネットワーク接続エラー: インターネット接続を確認してください。');
+    }
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
@@ -722,11 +745,15 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
   // ─── API キー検証 ─────────────────────────────
   async function verifyApiKey(apiKey) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
-      { method: 'GET' }
-    );
-    return response.ok;
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`,
+        { method: 'GET' }
+      );
+      return response.ok;
+    } catch (e) {
+      return false;
+    }
   }
 
   // ─── NeV結果集計 ──────────────────────────────

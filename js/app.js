@@ -221,6 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // 利用不可だった選択モデルの自動切替先（最初に見つかった利用可能モデル）
         if (needSwitch) {
           radio.checked = true;
+          state.selectedModel = model.id;
           needSwitch = false;
         }
       } else {
@@ -279,7 +280,11 @@ document.addEventListener('DOMContentLoaded', () => {
     els.previewContainer.innerHTML = '';
     try {
       const canvas = await DrawingChecker.pdfToPreview(file);
-      els.previewContainer.appendChild(canvas);
+      if (canvas) {
+        els.previewContainer.appendChild(canvas);
+      } else {
+        els.previewContainer.innerHTML = '<p style="color:#9ca3af;font-size:13px;">プレビューを生成できませんでした</p>';
+      }
     } catch (e) {
       els.previewContainer.innerHTML = '<p style="color:#9ca3af;font-size:13px;">プレビューを生成できませんでした</p>';
     }
@@ -367,7 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (err.retryAfterSec) {
         html += `<div class="error-retry">`;
-        html += `<button class="btn btn-retry" onclick="this.closest('.error-card').remove()">`;
+        html += `<button class="btn btn-retry" onclick="var s=this.closest('#errorSection')||this.closest('.error-card').parentElement;this.closest('.error-card').remove();if(s)s.style.display='none'">`;
         html += `&#128260; 閉じて再試行</button>`;
         html += `</div>`;
       }
@@ -396,7 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `</div>`;
 
       html += `<div class="error-retry">`;
-      html += `<button class="btn btn-retry" onclick="this.closest('.error-card').remove()">`;
+      html += `<button class="btn btn-retry" onclick="var s=this.closest('#errorSection')||this.closest('.error-card').parentElement;this.closest('.error-card').remove();if(s)s.style.display='none'">`;
       html += `&#128260; 閉じて再試行</button>`;
       html += `</div>`;
       html += `</div>`;
@@ -408,7 +413,7 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `</div>`;
       html += `<div class="error-detail"><p>${escapeHtml(err.message)}</p></div>`;
       html += `<div class="error-retry">`;
-      html += `<button class="btn btn-retry" onclick="this.closest('.error-card').remove()">`;
+      html += `<button class="btn btn-retry" onclick="var s=this.closest('#errorSection')||this.closest('.error-card').parentElement;this.closest('.error-card').remove();if(s)s.style.display='none'">`;
       html += `&#128260; 閉じる</button>`;
       html += `</div>`;
       html += `</div>`;
@@ -544,9 +549,9 @@ document.addEventListener('DOMContentLoaded', () => {
       warn: { icon: '&#9888;&#65039;', text: '要確認', desc: '一部の必須要件に不備の可能性があります' },
       fail: { icon: '&#10060;', text: '不合格', desc: '複数の必須要件が満たされていません' },
     };
-    const ov = overallLabels[data.overall];
+    const ov = overallLabels[data.overall] || overallLabels.warn;
 
-    el.className = 'overall-result ' + data.overall;
+    el.className = 'overall-result ' + (data.overall || 'warn');
     el.innerHTML = `
       <span class="overall-icon">${ov.icon}</span>
       <div class="overall-label">${ov.text}</div>
@@ -567,7 +572,7 @@ document.addEventListener('DOMContentLoaded', () => {
       el.textContent = '要確認';
     } else {
       el.className = 'tab-badge fail';
-      el.textContent = `NG ${data.requiredFail}件`;
+      el.textContent = `NG ${data.requiredFail || 0}件`;
     }
   }
 
@@ -610,11 +615,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── 3ソース比較テーブル描画 ─────────────────────
 
-  function formatNum(val) {
-    if (val === undefined || val === null || val === 0 || val === '') return '-';
-    return val + 'm';
-  }
-
   function renderCompareTable(el, kind, tableData, countedData, drawnData) {
     // 全ソースから種別を収集
     const allTypes = new Set();
@@ -627,13 +627,14 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Mapに変換
+    // Mapに変換（数値に正規化）
+    const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
     const tableMap = {};
-    if (tableData) tableData.forEach(t => { tableMap[t.type] = t.total_length_m; });
+    if (tableData) tableData.forEach(t => { tableMap[t.type] = toNum(t.total_length_m); });
     const countedMap = {};
-    if (countedData) countedData.forEach(t => { countedMap[t.type] = t.total_length_m; });
+    if (countedData) countedData.forEach(t => { countedMap[t.type] = toNum(t.total_length_m); });
     const drawnMap = {};
-    if (drawnData) drawnData.forEach(t => { drawnMap[t.type] = t.total_length_m; });
+    if (drawnData) drawnData.forEach(t => { drawnMap[t.type] = toNum(t.total_length_m); });
 
     let html = '<table class="compare-table"><thead><tr>';
     html += '<th>種別</th>';
@@ -764,7 +765,7 @@ document.addEventListener('DOMContentLoaded', () => {
           html += `<tr>`;
           html += `<td style="color:var(--gray-400);width:30px;">${i + 1}</td>`;
           html += `<td>${escapeHtml(a.method || '-')}</td>`;
-          html += `<td class="num-cell"><strong>${a.length_m}m</strong></td>`;
+          html += `<td class="num-cell"><strong>${a.length_m != null ? a.length_m + 'm' : '-'}</strong></td>`;
           html += `<td>${escapeHtml(a.conduit_type || '-')}</td>`;
           html += `<td style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.note || '')}</td>`;
           html += `</tr>`;
@@ -807,7 +808,7 @@ document.addEventListener('DOMContentLoaded', () => {
           html += `<tr>`;
           html += `<td style="color:var(--gray-400);width:30px;">${i + 1}</td>`;
           html += `<td>${escapeHtml(a.method || '-')}</td>`;
-          html += `<td class="num-cell"><strong>${a.length_m}m</strong></td>`;
+          html += `<td class="num-cell"><strong>${a.length_m != null ? a.length_m + 'm' : '-'}</strong></td>`;
           html += `<td>${escapeHtml(a.cable_type || '-')}</td>`;
           html += `<td style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.note || '')}</td>`;
           html += `</tr>`;
