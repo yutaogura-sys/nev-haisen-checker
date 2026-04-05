@@ -1369,6 +1369,11 @@ details[open] > .guide-toggle::before {
   border-color: var(--warning-border);
 }
 
+.error-card.general-error {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
 .error-header {
   display: flex;
   align-items: flex-start;
@@ -1507,6 +1512,11 @@ details[open] > .guide-toggle::before {
 .compare-table thead .col-rough {
   background: #fff7ed;
   color: #c2410c;
+}
+
+.compare-table thead .col-status {
+  background: var(--gray-100);
+  color: var(--gray-700);
 }
 
 .compare-table tbody td {

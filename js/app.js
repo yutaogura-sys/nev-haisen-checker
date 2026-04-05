@@ -324,10 +324,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const arrayBuffer = await file.arrayBuffer();
       const wb = XLSX.read(arrayBuffer, { type: 'array' });
 
-      // 「配線・配管集計」シートを探す
-      const sheetName = wb.SheetNames.find(n => n.includes('配線') && n.includes('配管')) || wb.SheetNames[1];
+      // 「配線・配管集計」シートを探す（完全一致優先→部分一致→なければエラー）
+      const sheetName = wb.SheetNames.find(n => n === '配線・配管集計')
+        || wb.SheetNames.find(n => n.includes('配線') && n.includes('配管'));
       if (!sheetName) {
-        alert('「配線・配管集計」シートが見つかりません。ラフ図チェックツールのExcelを選択してください。');
+        alert('「配線・配管集計」シートが見つかりません。\nラフ図チェックツールが出力したExcelを選択してください。\n\n検出されたシート: ' + wb.SheetNames.join(', '));
         return;
       }
       const ws = wb.Sheets[sheetName];
@@ -475,12 +476,10 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `</div>`;
       }
 
-      if (err.retryAfterSec) {
-        html += `<div class="error-retry">`;
-        html += `<button class="btn btn-retry" onclick="var s=this.closest('#errorSection')||this.closest('.error-card').parentElement;this.closest('.error-card').remove();if(s)s.style.display='none'">`;
-        html += `&#128260; 閉じて再試行</button>`;
-        html += `</div>`;
-      }
+      html += `<div class="error-retry">`;
+      html += `<button class="btn btn-retry" onclick="var s=this.closest('#errorSection')||this.closest('.error-card').parentElement;this.closest('.error-card').remove();if(s)s.style.display='none'">`;
+      html += `&#128260; 閉じて再試行</button>`;
+      html += `</div>`;
 
       html += `</div>`;
     } else if (err.type === 'parse_error') {
@@ -1033,6 +1032,8 @@ document.addEventListener('DOMContentLoaded', () => {
     lastResult = null;
     els.resultSection.style.display = 'none';
     removeFile();
+    removeRoughFile();
+    if (els.roughUploadSection) els.roughUploadSection.style.display = 'none';
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
