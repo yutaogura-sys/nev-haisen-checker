@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NeV 配線ルート図 要件判定チェックツール</title>
-  <link rel="stylesheet" href="css/style.css?v=20260404b">
+  <link rel="stylesheet" href="css/style.css?v=20260405a">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -195,10 +195,24 @@
           <div class="detected-info" id="detectedInfo"></div>
         </div>
 
-        <!-- 3ソース比較: 統括表 vs 旗上げ vs 記載線長 -->
+        <!-- ラフ図Excel取込（任意） -->
+        <div class="rough-upload-section" id="roughUploadSection" style="display:none;">
+          <h3 class="totals-section-title">&#128203; ラフ図データ比較（任意）</h3>
+          <p class="totals-section-desc">「ラフ図チェックツール」が出力したExcelファイルをアップロードすると、比較表に④ラフ図列が追加されます。</p>
+          <div class="rough-upload-area" id="roughUploadArea">
+            <label class="btn btn-secondary btn-sm rough-upload-btn">
+              &#128196; ラフ図Excelを選択
+              <input type="file" id="roughFileInput" accept=".xlsx,.xls" hidden>
+            </label>
+            <span class="rough-file-name" id="roughFileName"></span>
+            <button class="btn-icon btn-remove rough-remove" id="roughRemove" style="display:none;" title="削除">&#10005;</button>
+          </div>
+        </div>
+
+        <!-- 比較: 統括表 vs 旗上げ vs 記載線長 (vs ラフ図) -->
         <div class="totals-section" id="totalsSection">
-          <h3 class="totals-section-title">&#128202; 配線・配管 3ソース比較</h3>
-          <p class="totals-section-desc">①統括表（集計表の記載値）②旗上げ（緑注記の合算）③記載線長（寸法値の実測）を並列比較します。差異がある箇所はハイライトされます。</p>
+          <h3 class="totals-section-title">&#128202; 配線・配管 比較</h3>
+          <p class="totals-section-desc">①統括表（集計表の記載値）②旗上げ（緑注記の合算）③記載線長（寸法値の実測）を並列比較します。ラフ図Excelが取り込まれている場合は④列目に表示されます。</p>
 
           <div class="totals-group">
             <h4 class="totals-group-title">&#128268; 配線（ケーブル）比較</h4>
@@ -268,12 +282,14 @@
     <p class="footer-note">本ツールはAI判定のため、最終確認は目視でお願いします。</p>
   </footer>
 
+  <!-- SheetJS CDN (Excel読み取り) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <!-- PDF.js CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   </script>
-  <script src="js/checker.js?v=20260404b"></script>
-  <script src="js/app.js?v=20260404b"></script>
+  <script src="js/checker.js?v=20260405a"></script>
+  <script src="js/app.js?v=20260405a"></script>
 </body>
 </html>

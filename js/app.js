@@ -13,6 +13,8 @@ document.addEventListener('DOMContentLoaded', () => {
     selectedModel: 'gemini-2.5-flash',
     selectedType: null,
     file: null,
+    roughWireData: null,     // ラフ図Excel: 配線データ [{type, total_length_m}]
+    roughConduitData: null,  // ラフ図Excel: 配管データ [{type, total_length_m}]
   };
 
   // ─── DOM要素 ──────────────────────────────────
@@ -57,6 +59,11 @@ document.addEventListener('DOMContentLoaded', () => {
     compareConduitTable:$('compareConduitTable'),
     // 旗上げ
     annotationsContent:$('annotationsContent'),
+    // ラフ図Excel
+    roughUploadSection:$('roughUploadSection'),
+    roughFileInput:    $('roughFileInput'),
+    roughFileName:     $('roughFileName'),
+    roughRemove:       $('roughRemove'),
     // その他
     aiComment:         $('aiComment'),
     exportBtn:         $('exportBtn'),
@@ -121,6 +128,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     });
+
+    // ラフ図Excel
+    els.roughFileInput.addEventListener('change', onRoughFileSelect);
+    els.roughRemove.addEventListener('click', removeRoughFile);
 
     els.checkBtn.addEventListener('click', runCheck);
     els.exportBtn.addEventListener('click', exportResult);
@@ -301,6 +312,100 @@ document.addEventListener('DOMContentLoaded', () => {
     updateCheckButton();
   }
 
+  // ─── ラフ図Excel読み取り ───────────────────────
+  function onRoughFileSelect(e) {
+    if (e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    parseRoughExcel(file);
+  }
+
+  async function parseRoughExcel(file) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const wb = XLSX.read(arrayBuffer, { type: 'array' });
+
+      // 「配線・配管集計」シートを探す
+      const sheetName = wb.SheetNames.find(n => n.includes('配線') && n.includes('配管')) || wb.SheetNames[1];
+      if (!sheetName) {
+        alert('「配線・配管集計」シートが見つかりません。ラフ図チェックツールのExcelを選択してください。');
+        return;
+      }
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      const wireData = [];
+      const conduitData = [];
+      let section = null; // 'wire' or 'conduit'
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const cellA = String(row[0] || '').trim();
+
+        // セクション検出
+        if (cellA.includes('【配線集計】')) { section = 'wire'; continue; }
+        if (cellA.includes('【配管集計】')) { section = 'conduit'; continue; }
+        if (cellA === '配線合計' || cellA === '配管合計') { section = null; continue; }
+
+        // ヘッダー行をスキップ
+        if (cellA === '配線種別' || cellA === '配管種別') continue;
+
+        // 内訳行（先頭スペース）をスキップ
+        if (String(row[0] || '').startsWith('  ')) continue;
+
+        if (section === 'wire' && cellA) {
+          // 配線: col A=種別, col B=記載総長(m)
+          const val = parseFloat(row[1]);
+          if (!isNaN(val)) {
+            wireData.push({ type: cellA, total_length_m: val });
+          }
+        } else if (section === 'conduit' && cellA) {
+          // 配管: col A=種別, col E=合計長(m)
+          const val = parseFloat(row[4]);
+          if (!isNaN(val)) {
+            // 同一種別を集約
+            const existing = conduitData.find(d => d.type === cellA);
+            if (existing) {
+              existing.total_length_m += val;
+            } else {
+              conduitData.push({ type: cellA, total_length_m: val });
+            }
+          }
+        }
+      }
+
+      state.roughWireData = wireData.length > 0 ? wireData : null;
+      state.roughConduitData = conduitData.length > 0 ? conduitData : null;
+
+      // UI更新
+      els.roughFileName.textContent = file.name + ' ✓';
+      els.roughFileName.style.color = 'var(--success)';
+      els.roughRemove.style.display = '';
+
+      // 結果が表示中なら比較テーブルを再描画
+      if (lastResult) {
+        renderCompareTable(els.compareWireTable, 'wire', lastResult.tableWireTotals, lastResult.countedWireTotals, lastResult.drawnWireLengths, state.roughWireData);
+        renderCompareTable(els.compareConduitTable, 'conduit', lastResult.tableConduitTotals, lastResult.countedConduitTotals, lastResult.drawnConduitLengths, state.roughConduitData);
+      }
+    } catch (err) {
+      console.error('ラフ図Excel解析エラー:', err);
+      alert('Excelファイルの読み取りに失敗しました。\nラフ図チェックツールが出力したExcelか確認してください。');
+    }
+  }
+
+  function removeRoughFile() {
+    state.roughWireData = null;
+    state.roughConduitData = null;
+    els.roughFileInput.value = '';
+    els.roughFileName.textContent = '';
+    els.roughRemove.style.display = 'none';
+
+    // 結果が表示中なら比較テーブルを再描画（ラフ図列を除去）
+    if (lastResult) {
+      renderCompareTable(els.compareWireTable, 'wire', lastResult.tableWireTotals, lastResult.countedWireTotals, lastResult.drawnWireLengths, null);
+      renderCompareTable(els.compareConduitTable, 'conduit', lastResult.tableConduitTotals, lastResult.countedConduitTotals, lastResult.drawnConduitLengths, null);
+    }
+  }
+
   function formatFileSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -473,9 +578,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // 読み取り情報
     renderDetectedInfo(result.detectedInfo);
 
-    // 3ソース比較テーブル
-    renderCompareTable(els.compareWireTable, 'wire', result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths);
-    renderCompareTable(els.compareConduitTable, 'conduit', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths);
+    // ラフ図Excel取込セクションを表示
+    if (els.roughUploadSection) els.roughUploadSection.style.display = '';
+
+    // 比較テーブル（ラフ図データがあれば4列目追加）
+    renderCompareTable(els.compareWireTable, 'wire', result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths, state.roughWireData);
+    renderCompareTable(els.compareConduitTable, 'conduit', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData);
 
     // 旗上げ詳細一覧
     renderAnnotationsCheck(result.flaggedAnnotations, result.tableWireTotals, result.tableConduitTotals);
@@ -613,14 +721,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ─── 3ソース比較テーブル描画 ─────────────────────
+  // ─── 比較テーブル描画（3〜4ソース対応）──────────────
 
-  function renderCompareTable(el, kind, tableData, countedData, drawnData) {
+  function renderCompareTable(el, kind, tableData, countedData, drawnData, roughData) {
+    const hasRough = roughData && roughData.length > 0;
+
     // 全ソースから種別を収集
     const allTypes = new Set();
     if (tableData) tableData.forEach(t => allTypes.add(t.type));
     if (countedData) countedData.forEach(t => allTypes.add(t.type));
     if (drawnData) drawnData.forEach(t => allTypes.add(t.type));
+    if (hasRough) roughData.forEach(t => allTypes.add(t.type));
 
     if (allTypes.size === 0) {
       el.innerHTML = '<p class="totals-empty">データを読み取れませんでした</p>';
@@ -635,12 +746,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (countedData) countedData.forEach(t => { countedMap[t.type] = toNum(t.total_length_m); });
     const drawnMap = {};
     if (drawnData) drawnData.forEach(t => { drawnMap[t.type] = toNum(t.total_length_m); });
+    const roughMap = {};
+    if (hasRough) roughData.forEach(t => { roughMap[t.type] = toNum(t.total_length_m); });
 
     let html = '<table class="compare-table"><thead><tr>';
     html += '<th>種別</th>';
     html += '<th class="col-table">&#9312; 統括表</th>';
     html += '<th class="col-flag">&#9313; 旗上げ合計</th>';
     html += '<th class="col-drawn">&#9314; 記載線長</th>';
+    if (hasRough) html += '<th class="col-rough">&#9315; ラフ図</th>';
     html += '<th class="col-status">判定</th>';
     html += '</tr></thead><tbody>';
 
@@ -648,41 +762,43 @@ document.addEventListener('DOMContentLoaded', () => {
       const tv = tableMap[type];
       const fv = countedMap[type];
       const dv = drawnMap[type];
+      const rv = hasRough ? roughMap[type] : undefined;
 
-      // 3値の一致判定
-      const vals = [tv, fv, dv].filter(v => v !== undefined && v !== null);
-      const allMatch = vals.length >= 2 && vals.every(v => v === vals[0]);
-      const hasAnyDiff = vals.length >= 2 && !allMatch;
+      // 全値の一致判定
+      const vals = [tv, fv, dv];
+      if (hasRough) vals.push(rv);
+      const validVals = vals.filter(v => v !== undefined && v !== null);
+      const allMatch = validVals.length >= 2 && validVals.every(v => v === validVals[0]);
+      const hasAnyDiff = validVals.length >= 2 && !allMatch;
 
-      // 個別差異
-      const tvStr = tv !== undefined && tv !== null ? tv + 'm' : '-';
-      const fvStr = fv !== undefined && fv !== null ? fv + 'm' : '-';
-      const dvStr = dv !== undefined && dv !== null ? dv + 'm' : '-';
-
+      const fmtVal = v => (v !== undefined && v !== null) ? v + 'm' : '-';
       const diffCell = (val, ref) => {
         if (val === undefined || val === null || ref === undefined || ref === null) return '';
-        if (val !== ref) return ' diff-cell';
-        return '';
+        return val !== ref ? ' diff-cell' : '';
       };
 
       html += '<tr>';
       html += `<td class="type-cell">${escapeHtml(type)}</td>`;
-      html += `<td class="num-cell">${tvStr}</td>`;
-      html += `<td class="num-cell${diffCell(fv, tv)}">${fvStr}</td>`;
-      html += `<td class="num-cell${diffCell(dv, tv)}">${dvStr}</td>`;
+      html += `<td class="num-cell">${fmtVal(tv)}</td>`;
+      html += `<td class="num-cell${diffCell(fv, tv)}">${fmtVal(fv)}</td>`;
+      html += `<td class="num-cell${diffCell(dv, tv)}">${fmtVal(dv)}</td>`;
+      if (hasRough) html += `<td class="num-cell${diffCell(rv, tv)}">${fmtVal(rv)}</td>`;
 
       if (allMatch) {
         html += `<td class="status-cell"><span class="match-badge">一致</span></td>`;
       } else if (hasAnyDiff) {
         const diffs = [];
-        if (tv !== undefined && fv !== undefined && tv !== fv) {
-          diffs.push(`①②差 ${fv - tv > 0 ? '+' : ''}${Math.round((fv - tv) * 10) / 10}m`);
-        }
-        if (tv !== undefined && dv !== undefined && tv !== dv) {
-          diffs.push(`①③差 ${dv - tv > 0 ? '+' : ''}${Math.round((dv - tv) * 10) / 10}m`);
-        }
-        if (fv !== undefined && dv !== undefined && fv !== dv) {
-          diffs.push(`②③差 ${dv - fv > 0 ? '+' : ''}${Math.round((dv - fv) * 10) / 10}m`);
+        const diffPair = (label, a, b) => {
+          if (a !== undefined && b !== undefined && a !== b) {
+            diffs.push(`${label} ${b - a > 0 ? '+' : ''}${Math.round((b - a) * 10) / 10}m`);
+          }
+        };
+        diffPair('①②差', tv, fv);
+        diffPair('①③差', tv, dv);
+        if (hasRough) diffPair('①④差', tv, rv);
+        if (diffs.length === 0) {
+          diffPair('②③差', fv, dv);
+          if (hasRough) diffPair('②④差', fv, rv);
         }
         html += `<td class="status-cell"><span class="diff-badge">${escapeHtml(diffs[0] || '差異あり')}</span>`;
         if (diffs.length > 1) {

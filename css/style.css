@@ -1504,6 +1504,11 @@ details[open] > .guide-toggle::before {
   color: #2563eb;
 }
 
+.compare-table thead .col-rough {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
 .compare-table tbody td {
   padding: 8px 12px;
   border-bottom: 1px solid var(--gray-100);
@@ -1536,6 +1541,36 @@ details[open] > .guide-toggle::before {
   font-size: 10px;
   color: var(--gray-500);
   margin-top: 2px;
+}
+
+/* --- ラフ図Excel取込セクション --- */
+.rough-upload-section {
+  background: var(--gray-50);
+  border: 1px dashed var(--gray-300);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+
+.rough-upload-area {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.rough-upload-btn {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rough-file-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.rough-remove {
+  flex-shrink: 0;
 }
 
 @media (max-width: 640px) {
