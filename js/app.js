@@ -722,31 +722,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── 比較テーブル描画（3〜4ソース対応）──────────────
 
+  // ─── 種別名の正規化（表記揺れ吸収）────────────────
+  function normalizeType(str) {
+    if (!str) return '';
+    return str
+      .replace(/\s+/g, '')        // スペース除去: "CV 8sq-3c" → "CV8sq-3c"
+      .replace(/[×xＸ]/gi, 'x')   // × → x 統一
+      .replace(/[ー−–—]/g, '-')   // 全角ダッシュ → ハイフン
+      .toUpperCase();              // 大文字統一: "3c" → "3C"
+  }
+
   function renderCompareTable(el, kind, tableData, countedData, drawnData, roughData) {
     const hasRough = roughData && roughData.length > 0;
+    const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
 
-    // 全ソースから種別を収集
-    const allTypes = new Set();
-    if (tableData) tableData.forEach(t => allTypes.add(t.type));
-    if (countedData) countedData.forEach(t => allTypes.add(t.type));
-    if (drawnData) drawnData.forEach(t => allTypes.add(t.type));
-    if (hasRough) roughData.forEach(t => allTypes.add(t.type));
+    // 正規化キー → { displayName, table, counted, drawn, rough }
+    const merged = {};
+    const addSource = (data, field) => {
+      if (!data) return;
+      data.forEach(t => {
+        const key = normalizeType(t.type);
+        if (!key) return;
+        if (!merged[key]) merged[key] = { displayName: t.type };
+        merged[key][field] = toNum(t.total_length_m);
+        // 表示名は最も長い（情報量が多い）ものを採用
+        if (t.type.length > merged[key].displayName.length) {
+          merged[key].displayName = t.type;
+        }
+      });
+    };
+    addSource(tableData, 'table');
+    addSource(countedData, 'counted');
+    addSource(drawnData, 'drawn');
+    if (hasRough) addSource(roughData, 'rough');
 
-    if (allTypes.size === 0) {
+    const keys = Object.keys(merged);
+    if (keys.length === 0) {
       el.innerHTML = '<p class="totals-empty">データを読み取れませんでした</p>';
       return;
     }
-
-    // Mapに変換（数値に正規化）
-    const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
-    const tableMap = {};
-    if (tableData) tableData.forEach(t => { tableMap[t.type] = toNum(t.total_length_m); });
-    const countedMap = {};
-    if (countedData) countedData.forEach(t => { countedMap[t.type] = toNum(t.total_length_m); });
-    const drawnMap = {};
-    if (drawnData) drawnData.forEach(t => { drawnMap[t.type] = toNum(t.total_length_m); });
-    const roughMap = {};
-    if (hasRough) roughData.forEach(t => { roughMap[t.type] = toNum(t.total_length_m); });
 
     let html = '<table class="compare-table"><thead><tr>';
     html += '<th>種別</th>';
@@ -757,11 +771,12 @@ document.addEventListener('DOMContentLoaded', () => {
     html += '<th class="col-status">判定</th>';
     html += '</tr></thead><tbody>';
 
-    Array.from(allTypes).forEach(type => {
-      const tv = tableMap[type];
-      const fv = countedMap[type];
-      const dv = drawnMap[type];
-      const rv = hasRough ? roughMap[type] : undefined;
+    keys.forEach(key => {
+      const row = merged[key];
+      const tv = row.table;
+      const fv = row.counted;
+      const dv = row.drawn;
+      const rv = hasRough ? row.rough : undefined;
 
       // 全値の一致判定
       const vals = [tv, fv, dv];
@@ -777,7 +792,7 @@ document.addEventListener('DOMContentLoaded', () => {
       };
 
       html += '<tr>';
-      html += `<td class="type-cell">${escapeHtml(type)}</td>`;
+      html += `<td class="type-cell">${escapeHtml(row.displayName)}</td>`;
       html += `<td class="num-cell">${fmtVal(tv)}</td>`;
       html += `<td class="num-cell${diffCell(fv, tv)}">${fmtVal(fv)}</td>`;
       html += `<td class="num-cell${diffCell(dv, tv)}">${fmtVal(dv)}</td>`;
