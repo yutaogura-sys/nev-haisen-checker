@@ -67,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // その他
     aiComment:         $('aiComment'),
     exportBtn:         $('exportBtn'),
+    exportExcelBtn:    $('exportExcelBtn'),
     recheckBtn:        $('recheckBtn'),
   };
 
@@ -135,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     els.checkBtn.addEventListener('click', runCheck);
     els.exportBtn.addEventListener('click', exportResult);
+    els.exportExcelBtn.addEventListener('click', exportExcel);
     els.recheckBtn.addEventListener('click', resetForRecheck);
 
     // タブ切替
@@ -1040,6 +1042,150 @@ document.addEventListener('DOMContentLoaded', () => {
       els.exportBtn.textContent = '\u30B3\u30D4\u30FC\u3057\u307E\u3057\u305F!';
       setTimeout(() => { els.exportBtn.innerHTML = '&#128196; 結果をコピー'; }, 2000);
     });
+  }
+
+  // ─── Excelダウンロード ─────────────────────────
+  function exportExcel() {
+    if (!lastResult || typeof XLSX === 'undefined') return;
+
+    const wb = XLSX.utils.book_new();
+    const result = lastResult;
+    const typeLabel = state.selectedType === 'kiso' ? '基礎充電' : '目的地充電';
+    const modelInfo = DrawingChecker.MODELS.find(m => m.id === state.selectedModel);
+    const modelLabel = modelInfo ? modelInfo.name : state.selectedModel;
+    const overallLabel = v => v === 'pass' ? '合格' : v === 'warn' ? '要確認' : '不合格';
+    const statusLabel = s => s === 'pass' ? 'OK' : s === 'fail' ? 'NG' : '要確認';
+
+    // ===== シート1: 判定結果 =====
+    const s1 = [];
+    s1.push(['NeV 配線ルート図 要件判定結果']);
+    s1.push(['図面タイプ', typeLabel, '使用モデル', modelLabel, '解析ページ数', result.analyzedPages]);
+    s1.push([]);
+
+    // 読み取り情報
+    if (result.detectedInfo) {
+      s1.push(['【読み取り情報】']);
+      const di = result.detectedInfo;
+      if (di.power_source_type) s1.push(['電源種別', di.power_source_type]);
+      if (di.power_source_capacity) s1.push(['電源容量', di.power_source_capacity]);
+      if (di.charger_count) s1.push(['充電器台数', di.charger_count]);
+      if (di.total_wire_types) s1.push(['配線種別数', di.total_wire_types]);
+      if (di.total_conduit_types) s1.push(['配管種別数', di.total_conduit_types]);
+      s1.push([]);
+    }
+
+    // NeV判定
+    s1.push(['【NeV要件判定】', overallLabel(result.nev.overall)]);
+    s1.push(['合格', result.nev.totalPass + '/' + result.nev.totalItems + '項目', '必須', result.nev.requiredPass + '/' + result.nev.requiredTotal]);
+    s1.push([]);
+    s1.push(['判定', '必須', 'カテゴリ', 'チェック項目', '検出内容', '詳細']);
+    result.nev.items.forEach(item => {
+      s1.push([statusLabel(item.status), item.required ? '必須' : '任意', item.category, item.label, item.found_text || '', item.detail || '']);
+    });
+    s1.push([]);
+
+    // マニュアル判定
+    s1.push(['【作図センターマニュアル判定】', overallLabel(result.manual.overall)]);
+    s1.push(['合格', result.manual.totalPass + '/' + result.manual.totalItems + '項目', '必須', result.manual.requiredPass + '/' + result.manual.requiredTotal]);
+    s1.push([]);
+    s1.push(['判定', '必須', 'カテゴリ', 'チェック項目', '検出内容', '詳細']);
+    result.manual.items.forEach(item => {
+      s1.push([statusLabel(item.status), item.required ? '必須' : '任意', item.category, item.label, item.found_text || '', item.detail || '']);
+    });
+    s1.push([]);
+
+    // AIコメント
+    if (result.overallComment) {
+      s1.push(['【AI総合コメント】']);
+      s1.push([result.overallComment]);
+    }
+
+    const ws1 = XLSX.utils.aoa_to_sheet(s1);
+    ws1['!cols'] = [{ wch: 8 }, { wch: 10 }, { wch: 14 }, { wch: 30 }, { wch: 40 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws1, '判定結果');
+
+    // ===== シート2: 配線・配管比較 =====
+    const s2 = [];
+    const hasRough = state.roughWireData || state.roughConduitData;
+    const headers = ['種別', '①統括表', '②旗上げ合計', '③記載線長'];
+    if (hasRough) headers.push('④ラフ図');
+    headers.push('判定');
+
+    // 比較テーブル生成ヘルパー
+    const buildCompareRows = (tableData, countedData, drawnData, roughData) => {
+      const rows = [];
+      const hasR = roughData && roughData.length > 0;
+      const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
+      const merged = {};
+      const addSrc = (data, field) => {
+        if (!data) return;
+        data.forEach(t => {
+          const key = normalizeType(t.type);
+          if (!key) return;
+          if (!merged[key]) merged[key] = { displayName: t.type };
+          merged[key][field] = toNum(t.total_length_m);
+          if (t.type.length > merged[key].displayName.length) merged[key].displayName = t.type;
+        });
+      };
+      addSrc(tableData, 'table');
+      addSrc(countedData, 'counted');
+      addSrc(drawnData, 'drawn');
+      if (hasR) addSrc(roughData, 'rough');
+
+      Object.keys(merged).forEach(key => {
+        const r = merged[key];
+        const tv = r.table, fv = r.counted, dv = r.drawn, rv = hasR ? r.rough : undefined;
+        const vals = [tv, fv, dv];
+        if (hasR) vals.push(rv);
+        const valid = vals.filter(v => v !== undefined && v !== null);
+        const allMatch = valid.length >= 2 && valid.every(v => v === valid[0]);
+
+        let status = '';
+        if (allMatch) status = '一致';
+        else if (valid.length >= 2) status = '差異あり';
+        else status = 'データ不足';
+
+        const row = [r.displayName, tv != null ? tv : '', fv != null ? fv : '', dv != null ? dv : ''];
+        if (hasRough) row.push(rv != null ? rv : '');
+        row.push(status);
+        rows.push(row);
+      });
+      return rows;
+    };
+
+    s2.push(['【配線（ケーブル）比較】']);
+    s2.push(headers);
+    buildCompareRows(result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths, state.roughWireData).forEach(r => s2.push(r));
+    s2.push([]);
+
+    s2.push(['【配管 比較】']);
+    s2.push(headers);
+    buildCompareRows(result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData).forEach(r => s2.push(r));
+
+    const ws2 = XLSX.utils.aoa_to_sheet(s2);
+    ws2['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws2, '配線・配管比較');
+
+    // ===== シート3: 旗上げ詳細 =====
+    if (result.flaggedAnnotations && result.flaggedAnnotations.length > 0) {
+      const s3 = [];
+      s3.push(['【旗上げ詳細一覧】']);
+      s3.push(['ケーブル種別', '施工方法', '距離(m)', '配管種別', '補足']);
+      result.flaggedAnnotations.forEach(a => {
+        s3.push([a.cable_type || a.conduit_type || '-', a.method || '-', a.length_m != null ? a.length_m : '', a.conduit_type || '-', a.note || '']);
+      });
+
+      const ws3 = XLSX.utils.aoa_to_sheet(s3);
+      ws3['!cols'] = [{ wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 16 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(wb, ws3, '旗上げ詳細');
+    }
+
+    // ダウンロード
+    const fileName = `配線ルート図_判定結果_${typeLabel}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+
+    els.exportExcelBtn.textContent = 'ダウンロード完了!';
+    setTimeout(() => { els.exportExcelBtn.innerHTML = '&#128229; Excelでダウンロード'; }, 2000);
   }
 
   // ─── 再チェック ───────────────────────────────
