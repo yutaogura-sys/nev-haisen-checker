@@ -866,11 +866,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // 統括表のMapを作成
+    // 統括表のMapを作成（normalizeType で正規化キーを使い、表記揺れを吸収）
     const tableWireMap = {};
-    if (tableWire) tableWire.forEach(t => { tableWireMap[t.type] = t.total_length_m; });
+    if (tableWire) tableWire.forEach(t => { tableWireMap[normalizeType(t.type)] = t.total_length_m; });
     const tableConduitMap = {};
-    if (tableConduit) tableConduit.forEach(t => { tableConduitMap[t.type] = t.total_length_m; });
+    if (tableConduit) tableConduit.forEach(t => { tableConduitMap[normalizeType(t.type)] = t.total_length_m; });
 
     // 旗上げをケーブル種別でグループ化
     const cableGroups = {};
@@ -898,7 +898,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const items = cableGroups[cableType];
         const sum = items.reduce((s, a) => s + (a.length_m || 0), 0);
         const roundedSum = Math.round(sum * 10) / 10;
-        const tableVal = tableWireMap[cableType];
+        const tableVal = tableWireMap[normalizeType(cableType)];
         const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== roundedSum;
 
         html += `<div class="anno-group">`;
@@ -921,7 +921,7 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '<th>#</th><th>施工方法</th><th>距離</th><th>配管</th><th>共入れ</th><th>補足</th>';
         html += '</tr></thead><tbody>';
         items.forEach((a, i) => {
-          const sharedBadge = a.shared_conduit_count > 1
+          const sharedBadge = (Number(a.shared_conduit_count) || 0) > 1
             ? `<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:0 4px;border-radius:4px;">共入れ${a.shared_conduit_count}</span>`
             : '-';
           html += `<tr>`;
@@ -946,13 +946,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // 共入れ区間は物理配管長として1回だけカウント（shared_conduit_count で按分）
         const sum = items.reduce((s, a) => {
           const len = a.length_m || 0;
-          const shared = a.shared_conduit_count;
+          const shared = Number(a.shared_conduit_count) || 0;
           return s + (shared > 1 ? len / shared : len);
         }, 0);
         const roundedSum = Math.round(sum * 10) / 10;
-        const tableVal = tableConduitMap[conduitType];
+        const tableVal = tableConduitMap[normalizeType(conduitType)];
         const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== roundedSum;
-        const hasShared = items.some(a => a.shared_conduit_count > 1);
+        const hasShared = items.some(a => (Number(a.shared_conduit_count) || 0) > 1);
 
         html += `<div class="anno-group">`;
         html += `<div class="anno-group-header">`;
@@ -976,7 +976,7 @@ document.addEventListener('DOMContentLoaded', () => {
         html += '<th>#</th><th>施工方法</th><th>距離</th><th>ケーブル</th><th>共入れ</th><th>補足</th>';
         html += '</tr></thead><tbody>';
         items.forEach((a, i) => {
-          const sharedBadge = a.shared_conduit_count > 1
+          const sharedBadge = (Number(a.shared_conduit_count) || 0) > 1
             ? `<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:0 4px;border-radius:4px;">共入れ${a.shared_conduit_count}</span>`
             : '-';
           html += `<tr>`;
@@ -1062,8 +1062,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ─── ユーティリティ ───────────────────────────
   function escapeHtml(str) {
+    if (str == null) return '';
     const div = document.createElement('div');
-    div.textContent = str;
+    div.textContent = String(str);
     return div.innerHTML;
   }
 
@@ -1105,15 +1106,32 @@ document.addEventListener('DOMContentLoaded', () => {
     s1.push(['図面タイプ', typeLabel, '使用モデル', modelLabel, '解析ページ数', result.analyzedPages]);
     s1.push([]);
 
-    // 読み取り情報
+    // 読み取り情報（renderDetectedInfo と同じフィールドを使用）
     if (result.detectedInfo) {
       s1.push(['【読み取り情報】']);
       const di = result.detectedInfo;
-      if (di.power_source_type) s1.push(['電源種別', di.power_source_type]);
-      if (di.power_source_capacity) s1.push(['電源容量', di.power_source_capacity]);
-      if (di.charger_count) s1.push(['充電器台数', di.charger_count]);
-      if (di.total_wire_types) s1.push(['配線種別数', di.total_wire_types]);
-      if (di.total_conduit_types) s1.push(['配管種別数', di.total_conduit_types]);
+      const diFields = [
+        { key: 'facility_name',        label: '施設名' },
+        { key: 'drawing_title',        label: '図面名称' },
+        { key: 'project_name',         label: '工事名' },
+        { key: 'creator',              label: '作成者' },
+        { key: 'scale',                label: '縮尺' },
+        { key: 'creation_date',        label: '作成日' },
+        { key: 'wire_type',            label: '電線種類' },
+        { key: 'total_length',         label: '配線全長' },
+        { key: 'length_breakdown',     label: '配線内訳' },
+        { key: 'wiring_methods',       label: '配線方法' },
+        { key: 'conduit_types',        label: '配管種類' },
+        { key: 'power_source',         label: '電源元' },
+        { key: 'equipment_count',      label: 'EV充電設備数' },
+        { key: 'surface_material',     label: '路面状況' },
+        { key: 'ancillary_equipment',  label: '付帯設備' },
+        { key: 'existing_equipment_info', label: '既設設備' },
+      ];
+      diFields.forEach(f => {
+        const val = di[f.key];
+        if (val && String(val).trim() !== '') s1.push([f.label, String(val)]);
+      });
       s1.push([]);
     }
 
@@ -1149,7 +1167,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ===== シート2: 配線・配管比較 =====
     const s2 = [];
-    const hasRough = state.roughWireData || state.roughConduitData;
+    const hasRough = (state.roughWireData && state.roughWireData.length > 0) || (state.roughConduitData && state.roughConduitData.length > 0);
     const headers = ['種別', '①統括表', '②旗上げ合計', '③記載線長'];
     if (hasRough) headers.push('④ラフ図');
     headers.push('判定');
@@ -1215,7 +1233,7 @@ document.addEventListener('DOMContentLoaded', () => {
       s3.push(['【旗上げ詳細一覧】']);
       s3.push(['ケーブル種別', '施工方法', '距離(m)', '配管種別', '共入れ', '補足']);
       result.flaggedAnnotations.forEach(a => {
-        const sharedLabel = a.shared_conduit_count > 1 ? `共入れ${a.shared_conduit_count}` : '';
+        const sharedLabel = (Number(a.shared_conduit_count) || 0) > 1 ? `共入れ${a.shared_conduit_count}` : '';
         s3.push([a.cable_type || a.conduit_type || '-', a.method || '-', a.length_m != null ? a.length_m : '', a.conduit_type || '-', sharedLabel, a.note || '']);
       });
 
