@@ -53,7 +53,7 @@ const DrawingChecker = (() => {
     { id: 'compass', category: 'layout', label: '方位記号（N）の記載',
       description: '方位記号（北を示すN矢印）が図面上に記載されているか', required: true },
     { id: 'surface_material', category: 'layout', label: '路面状況の記載',
-      description: '路面を構成する材質が記載されているか。正解例：アスファルト、コンクリート、土等', required: true },
+      description: '掘削工事（埋設配管）がある場合のみ必須。配線ルートに埋設区間がある場合、路面を構成する材質（アスファルト、コンクリート、土等）が記載されているか確認する。露出配管のみの場合はパス（pass）とする', required: false },
 
     // ── 付帯設備 ──
     { id: 'rise_info', category: 'ancillary', label: '立上げ・掘削の長さの記載',
