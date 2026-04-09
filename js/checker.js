@@ -710,6 +710,19 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
         throw err;
       }
 
+      // サーバー高負荷 (503) / 内部エラー (500) の検知
+      if (status === 503 || status === 500 || errMsg.includes('high demand') || errMsg.includes('overloaded') || errMsg.includes('temporarily unavailable')) {
+        const err = new Error(
+          status === 503 || errMsg.includes('high demand')
+            ? `モデル「${useModel}」は現在アクセスが集中しており、一時的に応答できません。`
+            : `Gemini API でサーバーエラーが発生しました（HTTP ${status}）。`
+        );
+        err.type = 'server_overload';
+        err.model = useModel;
+        err.statusCode = status;
+        throw err;
+      }
+
       throw new Error(errMsg || `API エラー (${status})`);
     }
 

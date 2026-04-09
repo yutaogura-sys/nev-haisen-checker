@@ -511,6 +511,33 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `&#128260; 閉じて再試行</button>`;
       html += `</div>`;
       html += `</div>`;
+    } else if (err.type === 'server_overload') {
+      html += `<div class="error-card quota-error">`;
+      html += `<div class="error-header">`;
+      html += `<span class="error-icon">&#9889;</span>`;
+      html += `<span class="error-title">${escapeHtml(err.message)}</span>`;
+      html += `</div>`;
+      html += `<div class="error-detail">`;
+      html += `<p>Gemini API サーバーが一時的に高負荷状態です。これは通常、数十秒〜数分で解消します。</p>`;
+      html += `<p>しばらく待ってから「リトライ」ボタンを押してください。</p>`;
+      html += `</div>`;
+      html += `<div class="error-suggestions">`;
+      html += `<div class="error-suggestions-title">対処方法:</div>`;
+      html += `<ul>`;
+      html += `<li>30秒〜1分ほど待ってからリトライしてください</li>`;
+      if (err.model && err.model.includes('pro')) {
+        html += `<li>Gemini 2.5 Flash など別のモデルに切り替えると成功しやすくなります</li>`;
+      }
+      html += `<li>繰り返し発生する場合は、時間帯を変えてお試しください</li>`;
+      html += `</ul>`;
+      html += `</div>`;
+      html += `<div class="error-retry" style="display:flex;gap:8px;">`;
+      html += `<button class="btn btn-primary" onclick="var s=document.getElementById('errorSection');if(s){s.style.display='none';s.innerHTML='';}document.getElementById('checkBtn').click();">`;
+      html += `&#128260; リトライ</button>`;
+      html += `<button class="btn btn-retry" onclick="var s=this.closest('#errorSection')||this.closest('.error-card').parentElement;this.closest('.error-card').remove();if(s)s.style.display='none'">`;
+      html += `閉じる</button>`;
+      html += `</div>`;
+      html += `</div>`;
     } else {
       html += `<div class="error-card general-error">`;
       html += `<div class="error-header">`;
