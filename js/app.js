@@ -891,14 +891,18 @@ document.addEventListener('DOMContentLoaded', () => {
         html += `</span></div>`;
 
         html += '<table class="totals-table anno-table"><thead><tr>';
-        html += '<th>#</th><th>施工方法</th><th>距離</th><th>配管</th><th>補足</th>';
+        html += '<th>#</th><th>施工方法</th><th>距離</th><th>配管</th><th>共入れ</th><th>補足</th>';
         html += '</tr></thead><tbody>';
         items.forEach((a, i) => {
+          const sharedBadge = a.shared_conduit_count > 1
+            ? `<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:0 4px;border-radius:4px;">共入れ${a.shared_conduit_count}</span>`
+            : '-';
           html += `<tr>`;
           html += `<td style="color:var(--gray-400);width:30px;">${i + 1}</td>`;
           html += `<td>${escapeHtml(a.method || '-')}</td>`;
           html += `<td class="num-cell"><strong>${a.length_m != null ? a.length_m + 'm' : '-'}</strong></td>`;
           html += `<td>${escapeHtml(a.conduit_type || '-')}</td>`;
+          html += `<td>${sharedBadge}</td>`;
           html += `<td style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.note || '')}</td>`;
           html += `</tr>`;
         });
@@ -912,16 +916,24 @@ document.addEventListener('DOMContentLoaded', () => {
       html += '<h4 class="totals-group-title" style="margin-top:20px;">&#128295; 配管別 旗上げ一覧</h4>';
       conduitKeys.forEach(conduitType => {
         const items = conduitGroups[conduitType];
-        const sum = items.reduce((s, a) => s + (a.length_m || 0), 0);
+        // 共入れ区間は物理配管長として1回だけカウント（shared_conduit_count で按分）
+        const sum = items.reduce((s, a) => {
+          const len = a.length_m || 0;
+          const shared = a.shared_conduit_count;
+          return s + (shared > 1 ? len / shared : len);
+        }, 0);
         const roundedSum = Math.round(sum * 10) / 10;
         const tableVal = tableConduitMap[conduitType];
         const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== roundedSum;
+        const hasShared = items.some(a => a.shared_conduit_count > 1);
 
         html += `<div class="anno-group">`;
         html += `<div class="anno-group-header">`;
-        html += `<span class="anno-type">${escapeHtml(conduitType)}</span>`;
+        html += `<span class="anno-type">${escapeHtml(conduitType)}`;
+        if (hasShared) html += ` <span style="font-size:11px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;margin-left:4px;">共入れあり</span>`;
+        html += `</span>`;
         html += `<span class="anno-sum ${hasDiff ? 'diff' : 'match'}">`;
-        html += `旗上げ合計: <strong>${roundedSum}m</strong>`;
+        html += `旗上げ合計（物理長）: <strong>${roundedSum}m</strong>`;
         if (tableVal !== undefined && tableVal !== null) {
           html += ` / 統括表: <strong>${tableVal}m</strong>`;
           if (hasDiff) {
@@ -934,14 +946,18 @@ document.addEventListener('DOMContentLoaded', () => {
         html += `</span></div>`;
 
         html += '<table class="totals-table anno-table"><thead><tr>';
-        html += '<th>#</th><th>施工方法</th><th>距離</th><th>ケーブル</th><th>補足</th>';
+        html += '<th>#</th><th>施工方法</th><th>距離</th><th>ケーブル</th><th>共入れ</th><th>補足</th>';
         html += '</tr></thead><tbody>';
         items.forEach((a, i) => {
+          const sharedBadge = a.shared_conduit_count > 1
+            ? `<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:0 4px;border-radius:4px;">共入れ${a.shared_conduit_count}</span>`
+            : '-';
           html += `<tr>`;
           html += `<td style="color:var(--gray-400);width:30px;">${i + 1}</td>`;
           html += `<td>${escapeHtml(a.method || '-')}</td>`;
           html += `<td class="num-cell"><strong>${a.length_m != null ? a.length_m + 'm' : '-'}</strong></td>`;
           html += `<td>${escapeHtml(a.cable_type || '-')}</td>`;
+          html += `<td>${sharedBadge}</td>`;
           html += `<td style="font-size:11px;color:var(--gray-500);">${escapeHtml(a.note || '')}</td>`;
           html += `</tr>`;
         });
@@ -1170,13 +1186,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (result.flaggedAnnotations && result.flaggedAnnotations.length > 0) {
       const s3 = [];
       s3.push(['【旗上げ詳細一覧】']);
-      s3.push(['ケーブル種別', '施工方法', '距離(m)', '配管種別', '補足']);
+      s3.push(['ケーブル種別', '施工方法', '距離(m)', '配管種別', '共入れ', '補足']);
       result.flaggedAnnotations.forEach(a => {
-        s3.push([a.cable_type || a.conduit_type || '-', a.method || '-', a.length_m != null ? a.length_m : '', a.conduit_type || '-', a.note || '']);
+        const sharedLabel = a.shared_conduit_count > 1 ? `共入れ${a.shared_conduit_count}` : '';
+        s3.push([a.cable_type || a.conduit_type || '-', a.method || '-', a.length_m != null ? a.length_m : '', a.conduit_type || '-', sharedLabel, a.note || '']);
       });
 
       const ws3 = XLSX.utils.aoa_to_sheet(s3);
-      ws3['!cols'] = [{ wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 16 }, { wch: 30 }];
+      ws3['!cols'] = [{ wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 16 }, { wch: 10 }, { wch: 30 }];
       XLSX.utils.book_append_sheet(wb, ws3, '旗上げ詳細');
     }
 
