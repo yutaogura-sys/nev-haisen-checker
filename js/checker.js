@@ -444,8 +444,8 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
   // ─── PDF → 画像変換 ────────────────────────────
   // 解像度を上げて小さな文字（旗上げ注記等）の読み取り精度を向上
-  const MAX_CANVAS_PIXELS = 25_000_000;
-  const MAX_CANVAS_DIM = 6144;
+  const MAX_CANVAS_PIXELS = 20_000_000;
+  const MAX_CANVAS_DIM = 5120;
 
   function calcSafeScale(page, targetScale) {
     const viewport = page.getViewport({ scale: targetScale });
@@ -479,7 +479,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i);
-      const safeScale = calcSafeScale(page, 4.0);
+      const safeScale = calcSafeScale(page, 3.5);
       const viewport = page.getViewport({ scale: safeScale });
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(viewport.width);
@@ -487,11 +487,11 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       const ctx = canvas.getContext('2d');
 
       await page.render({ canvasContext: ctx, viewport }).promise;
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.93);
       const base64 = dataUrl.split(',')[1];
       totalBase64Size += base64.length;
 
-      if (totalBase64Size > 28_000_000) {
+      if (totalBase64Size > 22_000_000) {
         console.warn(`ページ${i}でペイロードサイズ上限に近づいたため、以降のページをスキップします`);
         canvas.width = 0;
         canvas.height = 0;
