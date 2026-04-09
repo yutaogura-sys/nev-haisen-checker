@@ -264,12 +264,30 @@ ${manualCheckListText}
 - 「CV8sq-3C  露出 立上げ  3m」
 - 「E31  露出 横引き  13m」
 - 「CVT22sq  露出配管 PFD-28  5m」
+- 「CV22sq-2C+IV5.5sq  露出  既設キュービクル内配線・余長  6m」
+- 「CV22sq-2C+IV5.5sq  露出配管  PFD-36  30m」
 
 各旗上げについて以下を読み取ってください：
 1. **ケーブル種別**: CV8sq-3C、CVT22sq 等
 2. **配管種別**: E31、PFD-28 等（記載がある場合）
 3. **施工方法**: 露出/埋設/架空 + 横引き/立上げ/立下げ/EV充電設備用分電盤内部配線 等
 4. **距離**: Xm（数値）
+
+**「+」結合表記の解析（非常に重要）:**
+旗上げ注記でケーブル種別が「CV22sq-2C+IV5.5sq」のように「+」で結合されている場合、これは**複数のケーブル種別が同一経路を並走している**ことを意味します。
+- 「CV22sq-2C+IV5.5sq 露出 6m」→ CV22sq-2Cに6m AND IV5.5sqに6m を**それぞれ個別に**カウント
+- flagged_annotations にはケーブル種別ごとに**別々の行**として記録する（cable_type: "CV22sq-2C" で1行、cable_type: "IV5.5sq" で1行）
+- 「+」で結合されたケーブルは2種類とは限らない（3種類以上の場合もある）
+
+**見落としやすい区間タイプ（必ず確認すること）:**
+以下の区間は配管を伴わない露出区間のため、旗上げの文字が小さく見落としやすいです。必ず全て読み取ってください：
+- **既設キュービクル内配線・余長** — 電源元のキュービクル内部の配線と余長（例: 6m）
+- **既設ピット内配線** — 既設のピット（地下通路）内を通る配線（例: 3m）
+- **プルボックス内配線・余長** — プルボックス間の内部配線と余長（例: 2m）
+- **EV充電設備用分電盤内配線・余長** — 分電盤内部の配線と余長（例: 2m）
+- **立上げ・立下げ** — 配管の垂直部分（例: E-31 立上げ 4m、PFD-36 立下げ 2m）
+- **配管端部の短い区間** — プルボックス付近等の短い配管区間（例: E-31 3m）
+これらの小さな区間を合算すると全体の20〜40%を占めることがあります。1つでも漏れると統括表と大きな差異が出ます。
 
 **共入れ（共通配管）の読み取り — 旗上げ:**
 1本の配管に複数のケーブルが通る「共入れ」区間がある場合、旗上げの読み取りで**特に注意**してください：
@@ -412,12 +430,22 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 - drawn_wire_lengths / drawn_conduit_lengths は配線ルート線の寸法値から実測した値。寸法線がない場合は旗上げと同じ値を入れるか空配列 []
 - **統括表の数値検証**: 統括表の全長が内訳の合計と大きく乖離する場合（2倍以上差がある等）、読み取りミスの可能性が高いため数値を再確認すること
 - **よくある読み取りミス**: 隣の行の数値を読んでしまう、桁を間違える（15→150、183→18.3）、複数ケーブルの合計値を1種別の値として読んでしまう
-- 全てのチェック項目について必ず結果を返してください（スキップ不可）`;
+- 全てのチェック項目について必ず結果を返してください（スキップ不可）
+
+## 自己検証（回答前に必ず実行すること）
+回答のJSONを出力する**前に**、以下の検証を行い、大きな差異がある場合は旗上げの読み直しを行ってください：
+
+1. **旗上げ合計 vs 統括表の照合**: counted_wire_totals の各ケーブル種別の合計値と table_wire_totals の全長を比較する
+   - 差異が10%以上ある場合、旗上げの読み落としがある可能性が高い
+   - 特に「+」結合表記の区間、配管を伴わない露出区間（内配線・余長、ピット内配線等）を再確認する
+2. **flagged_annotations の合計検証**: flagged_annotations の length_m をケーブル種別ごとに合算し、counted_wire_totals と一致するか確認する
+3. **区間の網羅性確認**: 電源元（キュービクル等）からEV充電設備（分電盤）までの全経路が途切れなく繋がっているか確認する。途中に抜けがあれば旗上げを再確認する`;
   }
 
   // ─── PDF → 画像変換 ────────────────────────────
-  const MAX_CANVAS_PIXELS = 16_000_000;
-  const MAX_CANVAS_DIM = 4096;
+  // 解像度を上げて小さな文字（旗上げ注記等）の読み取り精度を向上
+  const MAX_CANVAS_PIXELS = 25_000_000;
+  const MAX_CANVAS_DIM = 6144;
 
   function calcSafeScale(page, targetScale) {
     const viewport = page.getViewport({ scale: targetScale });
@@ -451,7 +479,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i);
-      const safeScale = calcSafeScale(page, 3.0);
+      const safeScale = calcSafeScale(page, 4.0);
       const viewport = page.getViewport({ scale: safeScale });
       const canvas = document.createElement('canvas');
       canvas.width = Math.floor(viewport.width);
@@ -459,11 +487,11 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       const ctx = canvas.getContext('2d');
 
       await page.render({ canvasContext: ctx, viewport }).promise;
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
       const base64 = dataUrl.split(',')[1];
       totalBase64Size += base64.length;
 
-      if (totalBase64Size > 18_000_000) {
+      if (totalBase64Size > 28_000_000) {
         console.warn(`ページ${i}でペイロードサイズ上限に近づいたため、以降のページをスキップします`);
         canvas.width = 0;
         canvas.height = 0;
