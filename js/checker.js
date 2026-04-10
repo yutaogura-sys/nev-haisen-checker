@@ -426,8 +426,9 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
 ## 判定基準
 - **pass**: 要件/ルールを満たしている
-- **fail**: 要件/ルールを満たしていない
+- **fail**: 必須項目で要件/ルールを満たしていない場合のみ使用
 - **warn**: 記載はあるが不明瞭、または部分的にしか満たしていない
+- **任意項目（必須: いいえ）のルール**: 該当しない場合は **pass**、該当するが不備がある場合は **warn**（failは使わない）
 
 ## 重要な注意事項
 - 画像を隅々まで注意深く確認し、小さな文字やラベルも読み取ってください
@@ -837,7 +838,10 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
     const items = checks.map(check => {
       const result = resultMap[check.id] || { status: 'fail', found_text: '', detail: '判定結果が取得できませんでした' };
-      return { ...check, status: result.status, found_text: result.found_text || '', detail: result.detail || '' };
+      // 任意項目(required: false)は fail → warn に変換（不合格扱いにしない）
+      let status = result.status;
+      if (!check.required && status === 'fail') status = 'warn';
+      return { ...check, status, found_text: result.found_text || '', detail: result.detail || '' };
     });
 
     const categoryResults = {};
@@ -876,7 +880,10 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 
     const items = checks.map(check => {
       const result = resultMap[check.id] || { status: 'fail', found_text: '', detail: '判定結果が取得できませんでした' };
-      return { ...check, status: result.status, found_text: result.found_text || '', detail: result.detail || '' };
+      // 任意項目(required: false)は fail → warn に変換（不合格扱いにしない）
+      let status = result.status;
+      if (!check.required && status === 'fail') status = 'warn';
+      return { ...check, status, found_text: result.found_text || '', detail: result.detail || '' };
     });
 
     const categoryResults = {};
