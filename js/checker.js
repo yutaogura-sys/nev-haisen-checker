@@ -1055,10 +1055,10 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     if (result.flaggedAnnotations && result.flaggedAnnotations.length > 0) {
       text += `\n■ 旗上げ（各区間の注記）一覧\n`;
       result.flaggedAnnotations.forEach((a, i) => {
-        text += `  ${i + 1}. ${a.cable_type}`;
+        text += `  ${i + 1}. ${a.cable_type || a.conduit_type || '-'}`;
         if (a.conduit_type) text += ` / ${a.conduit_type}`;
-        text += ` | ${a.method} | ${a.length_m}m`;
-        if (a.shared_conduit_count > 1) text += ` [共入れ${a.shared_conduit_count}]`;
+        text += ` | ${a.method || '-'} | ${a.length_m != null ? a.length_m : '-'}m`;
+        if ((Number(a.shared_conduit_count) || 0) > 1) text += ` [共入れ${a.shared_conduit_count}]`;
         if (a.note) text += ` (${a.note})`;
         text += '\n';
       });

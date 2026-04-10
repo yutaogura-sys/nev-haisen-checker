@@ -878,13 +878,15 @@ document.addEventListener('DOMContentLoaded', () => {
     annotations.forEach(a => {
       // ケーブル
       if (a.cable_type) {
-        if (!cableGroups[a.cable_type]) cableGroups[a.cable_type] = [];
-        cableGroups[a.cable_type].push(a);
+        const ck = normalizeType(a.cable_type);
+        if (!cableGroups[ck]) cableGroups[ck] = [];
+        cableGroups[ck].push(a);
       }
       // 配管
       if (a.conduit_type) {
-        if (!conduitGroups[a.conduit_type]) conduitGroups[a.conduit_type] = [];
-        conduitGroups[a.conduit_type].push(a);
+        const dk = normalizeType(a.conduit_type);
+        if (!conduitGroups[dk]) conduitGroups[dk] = [];
+        conduitGroups[dk].push(a);
       }
     });
 
@@ -1167,15 +1169,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ===== シート2: 配線・配管比較 =====
     const s2 = [];
-    const hasRough = (state.roughWireData && state.roughWireData.length > 0) || (state.roughConduitData && state.roughConduitData.length > 0);
-    const headers = ['種別', '①統括表', '②旗上げ合計', '③記載線長'];
-    if (hasRough) headers.push('④ラフ図');
-    headers.push('判定');
 
-    // 比較テーブル生成ヘルパー
-    const buildCompareRows = (tableData, countedData, drawnData, roughData) => {
-      const rows = [];
+    // 比較テーブル生成ヘルパー（セクションごとにラフ図有無を判定）
+    const buildCompareSection = (title, tableData, countedData, drawnData, roughData) => {
       const hasR = roughData && roughData.length > 0;
+      const sectionHeaders = ['種別', '①統括表', '②旗上げ合計', '③記載線長'];
+      if (hasR) sectionHeaders.push('④ラフ図');
+      sectionHeaders.push('判定');
+
+      s2.push([title]);
+      s2.push(sectionHeaders);
+
       const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
       const merged = {};
       const addSrc = (data, field) => {
@@ -1207,21 +1211,15 @@ document.addEventListener('DOMContentLoaded', () => {
         else status = 'データ不足';
 
         const row = [r.displayName, tv != null ? tv : '', fv != null ? fv : '', dv != null ? dv : ''];
-        if (hasRough) row.push(rv != null ? rv : '');
+        if (hasR) row.push(rv != null ? rv : '');
         row.push(status);
-        rows.push(row);
+        s2.push(row);
       });
-      return rows;
     };
 
-    s2.push(['【配線（ケーブル）比較】']);
-    s2.push(headers);
-    buildCompareRows(result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths, state.roughWireData).forEach(r => s2.push(r));
+    buildCompareSection('【配線（ケーブル）比較】', result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths, state.roughWireData);
     s2.push([]);
-
-    s2.push(['【配管 比較】']);
-    s2.push(headers);
-    buildCompareRows(result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData).forEach(r => s2.push(r));
+    buildCompareSection('【配管 比較】', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData);
 
     const ws2 = XLSX.utils.aoa_to_sheet(s2);
     ws2['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
