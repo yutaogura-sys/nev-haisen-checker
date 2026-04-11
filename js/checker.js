@@ -598,6 +598,10 @@ ${manualCheckListText}
         { method: 'GET' }
       );
       if (!response.ok) {
+        // 503/500 は一時的な高負荷 — モデル自体は存在するので「利用可能」扱い
+        if (response.status === 503 || response.status === 500) {
+          return { available: true, reason: '' };
+        }
         const data = await response.json().catch(() => ({}));
         return { available: false, reason: data?.error?.message || `HTTP ${response.status}` };
       }
