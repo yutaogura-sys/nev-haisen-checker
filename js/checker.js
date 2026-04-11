@@ -156,8 +156,209 @@ const DrawingChecker = (() => {
     manual_notation:        { title: '(F)表記規則',                   icon: '&#128196;', order: 15, group: 'manual' },
   };
 
-  // ─── Gemini プロンプト生成 ──────────────────────
-  function buildPrompt(type) {
+  // ─── Gemini プロンプト生成（2パス方式）──────────────
+  // Pass 1: データ読み取り特化 / Pass 2: NeV・マニュアル判定特化
+
+  // NOTE: 旧 buildPrompt() は2パス化に伴い buildPass1Prompt / buildPass2Prompt に分離・削除済み
+  // ─── Pass 1 プロンプト（データ読み取り特化）───────────
+  function buildPass1Prompt(type) {
+    const typeLabel = type === 'kiso'
+      ? '基礎充電（マンション・集合住宅向け）'
+      : '目的地充電（商業施設・ホテル・ゴルフ場等向け）';
+
+    return `あなたはEV充電設備の「配線ルート図」データ読み取りのエキスパートです。
+アップロードされたPDFの全ページを隅々まで確認し、配線・配管データを高精度で読み取ってください。
+**このパスではデータの正確な読み取りのみに集中してください。要件の合否判定は行いません。**
+
+## 図面タイプ: ${typeLabel}
+
+## 【作業1】図面基本情報の読み取り (detected_info)
+表題欄および図面全体から以下を読み取ってください（見つからない項目は空文字）：
+施設名（設置場所名称）、図面名称（「配線ルート図」等）、工事名、作成者（会社名または個人名）、縮尺、作成日、電線種類（使用されている全ケーブル種別）、配線全長、配線内訳の要約、配線方法一覧（露出/埋設/架空等）、配管種類一覧、電源元（受電盤/分電盤/キュービクル等）、EV充電設備台数、路面状況（アスファルト/コンクリート/土等）、付帯設備（プルボックス/ハンドホール/支柱等）、既設設備情報
+
+## 【作業2】統括表（配線集計表）の記載値の読み取り
+図面内の統括表（配線集計表）から数値をそのまま読み取ってください。統括表がない場合は空配列 []。
+
+**統括表の読み取り手順（必ず従ってください）：**
+1. 各ケーブル種別の行を**1行ずつ**読み取る
+2. 各行の「全長」の数値を正確に読み取る（桁数に注意: 15m と 150m、2m と 20m 等の誤読に注意）
+3. 同じ行の「内訳」（露出/管内/埋設等）の数値も全て読み取る
+4. **検証**: 全長 = 内訳の合計 になるか確認。一致しない場合は再確認し修正
+5. 統括表の構成例:
+   - 1列目: ケーブル種別（CVT38sq、CV8sq-3C 等）
+   - 2列目: 全長（例: 15m）
+   - 3列目以降: 内訳（露出 6m、管内 合成樹脂 HIVE-54 4m、PFD-54 5m 等）
+6. 全長の数値は**ケーブル種別名のすぐ右隣**に記載されている数値であることが多い
+7. 別のケーブル種別の数値を混同しないよう、行単位で慎重に読み取る
+
+**共入れ（共通配管）の読み取り — 統括表:**
+- **共入れN**: 1本の配管にN本のケーブルを通す設計。例:「PFD-36（共入れ2）」
+- **※印**: 複数ケーブル行に同じ※番号がある場合、同一の物理配管を共有
+- **配管合計の算出**: table_conduit_totals には**物理配管の実長**を記載。※印で共有が示されている配管は重複カウントしない
+- **ケーブル合計の算出**: table_wire_totals には各ケーブル種別の「全長」をそのまま記載
+
+## 【作業3】旗上げ（各区間の注記）の全件読み取り
+配線ルート上のテキスト注記（「旗上げ」）を**1つ残らず全て**読み取ってください。
+**注記の文字色は複数あります**：新設区間は緑色や赤色、既設区間は青色で記載されます。**色に関係なく全ての旗上げを読み取ってください。**
+
+例（新設区間 — 緑色テキスト）：
+- 「CV8sq-3C  露出 横引き  13m」
+- 「CV8sq-3C  露出 立上げ  3m」
+- 「E31  露出 横引き  13m」
+- 「CVT22sq  露出配管 PFD-28  5m」
+- 「CV22sq-2C+IV5.5sq  露出  既設キュービクル内配線・余長  6m」
+- 「CV22sq-2C+IV5.5sq  露出配管  PFD-36  30m」
+
+例（既設区間 — 青色テキスト）：
+- 「CVT38sq  埋設配管  FEP-30（既設）  15m」
+- 「CVT22sq  既設埋設  FEP-40  10m」
+- 「CV8sq-3C  既設配管  FEP-30  8m」
+
+各旗上げについて以下を読み取ってください：
+1. **ケーブル種別**: CV8sq-3C、CVT22sq 等
+2. **配管種別**: E31、PFD-28 等（記載がある場合）
+3. **施工方法**: 露出/埋設/架空 + 横引き/立上げ/立下げ/EV充電設備用分電盤内部配線 等
+4. **距離**: Xm（数値）
+
+**「+」結合表記の解析（非常に重要）:**
+ケーブル種別が「CV22sq-2C+IV5.5sq」のように「+」で結合されている場合：
+- **複数のケーブル種別が同一経路・同一配管を並走**している
+- flagged_annotations にはケーブル種別ごとに**別々の行**として記録する
+- **shared_conduit_count の設定（必須）**: 「+」で結合されたケーブル種別数を設定。例:
+  - 「CV22sq-2C+IV5.5sq PFD-28 5m」→ 2種類 → 各エントリの shared_conduit_count = **2**
+  - 「A+B+C PFD-36 10m」→ 3種類 → 各エントリの shared_conduit_count = **3**
+- これにより配管の物理長が正しく算出される（5m÷2 + 5m÷2 = 5m）
+
+**「Xm (Ym×N)」表記の解析（非常に重要 — 二重記録厳禁）:**
+距離の後に「(Ym×N)」の括弧表記がある場合、Xmが総配線長、Ymが1台あたりの長さ、Nが台数：
+- 「CV8sq-3C PFD-36 22m (11m×2)」→ length_m = **22**（11mではない）。shared_conduit_count = 2
+- 「CV8sq-3C 露出 分電盤内配線・余長 4m (2m×2)」→ length_m = **4**
+- flagged_annotations には **Xm を length_m として1行だけ** 記録する。**Ymの行を別に作成しない**
+
+**見落としやすい区間タイプ（必ず確認すること）:**
+- **既設埋設配管（FEP管等）** — 青色テキストの既設区間。**最も見落とされやすい区間です**
+- **既設配管の立上げ・立下げ** — 既設埋設配管から地上に出る垂直区間
+- **既設キュービクル内配線・余長** — 電源元のキュービクル内部の配線と余長
+- **既設ピット内配線** — 既設のピット（地下通路）内を通る配線
+- **プルボックス内配線・余長** — プルボックス間の内部配線と余長
+- **EV充電設備用分電盤内配線・余長** — 分電盤内部の配線と余長
+- **立上げ・立下げ** — 配管の垂直部分
+- **配管端部の短い区間** — プルボックス付近等の短い配管区間
+これらの小さな区間を合算すると全体の20〜40%を占めることがあります。
+
+**共入れ（共通配管）の読み取り — 旗上げ:**
+- **共入れ区間の特定**: 同一経路に複数ケーブルが並走し、1本の配管を共有している区間
+- **ケーブル別に個別カウント**: 各ケーブル種別の距離をそれぞれ個別にカウント
+- **配管は物理長で1回カウント**: counted_conduit_totals では共入れ区間の配管を重複加算しない
+- **counted_conduit_totals 計算式（厳守）**: flagged_annotations を配管種別でグルーピングし、各エントリの length_m を shared_conduit_count で割った値を合計する（shared_conduit_count が 0 または 1 の場合はそのまま加算）。
+  具体例: PFD-36 の flagged_annotations が以下の3行の場合:
+    ① cable=CV22sq-2C / conduit=PFD-36 / 30m / shared_conduit_count=2
+    ② cable=IV5.5sq  / conduit=PFD-36 / 30m / shared_conduit_count=2
+    ③ cable=CV8sq-3C / conduit=PFD-36 / 10m / shared_conduit_count=0
+    → PFD-36 = 30÷2 + 30÷2 + 10÷1 = 15 + 15 + 10 = **40m** ← 正解
+    ✗ 誤り: 30 + 30 + 10 = 70m（共入れ区間を重複カウントしている）
+- **shared_conduit_count**: 共入れでない区間は 0、共入れの場合はケーブル本数（2以上）
+
+旗上げを全て読み取った上で、ケーブル種別・配管種別ごとに合算した値も算出してください。
+
+## 【作業4】記載線長（寸法値）の読み取り
+配線ルート線に沿って描かれた**寸法線（引出し線・矢印付きの距離表示）**を読み取り、ケーブル種別・配管種別ごとに合算してください。
+寸法線がない場合や旗上げと同一の場合は、旗上げと同じ値を入れてください。
+**drawn_conduit_lengths も共入れ区間の配管を重複カウントしないでください。**
+
+### 対象の配線（ケーブル）種別例
+CVT8sq、CVT14sq、CVT22sq、CVT38sq、CVT60sq、CVT100sq、CV5.5-3C、CV5sq-3C、CV8sq-3C、CV14sq-3C、CV22sq-3C、CV38sq-3C、CV60sq-3C、CV100sq-3C、VVF2mm-2C、VVF2mm-3C、IV5.5sq 等
+
+### 対象の配管種別例
+PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-42、HIVE-54、FEP-30、FEP-40、FEP-50、FEP-54、VE-22、VE-28、G28、G54、E25、E31、E39、CD-22 等
+
+## 重要
+- 旗上げは**1つも漏らさず**全て読み取ってください。読み落としは集計の食い違いの原因になります
+- 統括表・旗上げ・記載線長の値が一致しない場合でも、それぞれの数値をそのまま報告してください
+- 「EV充電設備用分電盤内部配線」「EV充電設備用分電盤〜配管端部」等の特殊区間も忘れずに読み取ってください
+- 統括表の全長が内訳の合計と大きく乖離する場合（2倍以上差がある等）、読み取りミスの可能性が高いため数値を再確認すること
+- **よくある読み取りミス**: 隣の行の数値を読んでしまう、桁を間違える（15→150、183→18.3）、複数ケーブルの合計値を1種別の値として読んでしまう
+
+## 回答フォーマット（厳密にこのJSON形式で返してください）
+**重要: 回答はJSON以外のテキストを含めず、以下のJSON構造のみを返してください。コードフェンス（\`\`\`json ... \`\`\`）で囲んでも構いません。**
+
+\`\`\`json
+{
+  "table_wire_totals": [
+    { "type": "ケーブル種別（例: CVT22sq）", "total_length_m": 数値 }
+  ],
+  "table_conduit_totals": [
+    { "type": "配管種別（例: PFD-28）", "total_length_m": 数値 }
+  ],
+  "counted_wire_totals": [
+    {
+      "type": "ケーブル種別（例: CVT22sq）",
+      "total_length_m": 数値,
+      "breakdown": {
+        "exposed_m": 数値,
+        "in_conduit_m": 数値,
+        "buried_m": 数値,
+        "aerial_m": 数値
+      }
+    }
+  ],
+  "counted_conduit_totals": [
+    {
+      "type": "配管種別（例: PFD-28）",
+      "total_length_m": 数値,
+      "method": "露出 | 埋設 | 架空"
+    }
+  ],
+  "drawn_wire_lengths": [
+    { "type": "ケーブル種別（例: CVT22sq）", "total_length_m": 数値 }
+  ],
+  "drawn_conduit_lengths": [
+    { "type": "配管種別（例: PFD-28）", "total_length_m": 数値 }
+  ],
+  "flagged_annotations": [
+    {
+      "cable_type": "ケーブル種別（例: CV8sq-3C）",
+      "conduit_type": "配管種別（例: E31）。配管記載がない場合は空文字",
+      "method": "施工方法（例: 露出 横引き、露出 立上げ、埋設 横引き 等）",
+      "length_m": 数値,
+      "shared_conduit_count": 0,
+      "note": "補足情報（区間の説明等。なければ空文字）"
+    }
+  ],
+  "detected_info": {
+    "facility_name": "施設名",
+    "drawing_title": "図面名称",
+    "project_name": "工事名",
+    "creator": "作成者",
+    "scale": "縮尺",
+    "creation_date": "作成日",
+    "wire_type": "電線種類",
+    "total_length": "配線全長",
+    "length_breakdown": "配線内訳の要約",
+    "wiring_methods": "配線方法一覧",
+    "conduit_types": "配管種類一覧",
+    "power_source": "電源元",
+    "equipment_count": "EV充電設備台数",
+    "surface_material": "路面状況",
+    "ancillary_equipment": "付帯設備",
+    "existing_equipment_info": "既設設備情報",
+    "page_count_analyzed": "解析ページ数"
+  }
+}
+\`\`\`
+
+## 自己検証（回答前に必ず実行すること）
+1. **旗上げ合計 vs 統括表の照合**: flagged_annotations の length_m をケーブル種別ごとに合算し、table_wire_totals の全長と比較。差異が10%以上ある場合は旗上げの読み直しを行う
+   - 旗上げ > 統括表: 「(Xm×N)」表記の二重記録、「+」結合表記の重複がないか確認
+   - 旗上げ < 統括表: 内配線・余長、ピット内、立上げ・立下げの読み落としがないか確認
+2. **配管合計 vs 統括表の照合**: flagged_annotations の配管種別ごとに length_m÷shared_conduit_count を合計し、table_conduit_totals と比較。特に「+」結合のshared_conduit_countが0のままになっていないか
+3. **「+」結合表記の確認**: 分割した全エントリのshared_conduit_countが結合ケーブル数と一致しているか
+4. **既設区間の確認**: 統括表にFEP管や「既設」がある場合、旗上げからも既設区間を読み取れているか
+5. **区間の網羅性確認**: 電源元からEV充電設備までの全経路が途切れなく繋がっているか`;
+  }
+
+  // ─── Pass 2 プロンプト（NeV・マニュアル判定特化）──────
+  function buildPass2Prompt(type, pass1Data) {
     const nevChecks = type === 'kiso'
       ? [...COMMON_CHECKS, ...KISO_CHECKS]
       : [...COMMON_CHECKS, ...MOKUTEKICHI_CHECKS];
@@ -174,13 +375,27 @@ const DrawingChecker = (() => {
       ? '基礎充電（マンション・集合住宅向け）'
       : '目的地充電（商業施設・ホテル・ゴルフ場等向け）';
 
+    // Pass 1 データの整形（内部メタデータを除外）
+    const dataContext = {};
+    ['detected_info', 'table_wire_totals', 'table_conduit_totals',
+     'counted_wire_totals', 'counted_conduit_totals',
+     'drawn_wire_lengths', 'drawn_conduit_lengths', 'flagged_annotations'
+    ].forEach(key => { if (pass1Data[key] !== undefined) dataContext[key] = pass1Data[key]; });
+    const dataJson = JSON.stringify(dataContext, null, 2);
+
     return `あなたはNeV補助金の「配線ルート図」審査と作図センターマニュアル準拠チェックのエキスパートです。
-アップロードされたEV充電設備の配線ルート図PDFを非常に高い精度で分析し、以下の3つの作業を行ってください：
-1. NeV補助金要件（5-9-3）に基づくチェック
-2. 作図センターマニュアルに基づくチェック
-3. 配線・配管の種別ごとの合計値算出
+前段のPass 1で図面から読み取ったデータと、図面画像の両方を参照しながら、要件チェックを行ってください。
+**このパスでは合否判定のみに集中してください。データの再集計は行いません。**
 
 ## 図面タイプ: ${typeLabel}
+
+## 【参考データ】Pass 1 読み取り結果
+以下のJSONは前段で図面から読み取ったデータです。判定の根拠として活用してください。
+不明な点がある場合は、提供された図面画像を直接確認してください。
+
+\`\`\`json
+${dataJson}
+\`\`\`
 
 ## 【Part 1】NeV補助金要件チェック
 
@@ -222,130 +437,15 @@ ${nevCheckListText}
 10. **ケーブル余長**: 立上げH=6000→4m、H=7000→5m、H=8000→6m、H=9000→7m
 11. **新設/既設プレフィックス**: 全設備ラベルに「新設」「既設」を付与
 12. **色分け**: 新設=赤、既設=青、電力会社工事=緑
-13. **デュアルスタンド配管**: PFD-36またはFEP-40のみ可
 
 ### マニュアルチェック項目
 ${manualCheckListText}
 
-## 【Part 3】配線・配管 種別ごとの合計値算出（3つのソースから）
-
-配線と配管について、**3つのソース**からそれぞれ種別ごとの合計長さを算出してください：
-
-### ソース1: 統括表（配線集計表）の記載値
-図面内に統括表（配線集計表）がある場合、その表に記載されている数値をそのまま読み取ってください。
-統括表がない場合は空配列 [] としてください。
-
-**統括表の読み取り手順（必ず従ってください）：**
-1. 統括表の各ケーブル種別の行を**1行ずつ**読み取る
-2. 各行の「全長」の数値を正確に読み取る（桁数に注意: 15m と 150m、2m と 20m 等の誤読に注意）
-3. 同じ行の「内訳」（露出/管内/埋設等）の数値も全て読み取る
-4. **検証**: 全長 = 内訳の合計 になるか確認。一致しない場合は数値を再確認し修正する
-5. 統括表の構成例:
-   - 1列目: ケーブル種別（CVT38sq、CV8sq-3C 等）
-   - 2列目: 全長（例: 15m）
-   - 3列目以降: 内訳（露出 6m、管内 合成樹脂 HIVE-54 4m、PFD-54 5m 等）
-6. 全長の数値は、その行の右端ではなく**ケーブル種別名のすぐ右隣**に記載されている数値であることが多い
-7. 別のケーブル種別の数値を混同しないよう、行単位で慎重に読み取る
-
-**共入れ（共通配管）の読み取り — 統括表:**
-統括表には「共入れ」「※印（※1、※2等）」で共通配管を示す記載があります。
-- **共入れN**: 1本の配管にN本のケーブルを通す設計。例:「PFD-36（共入れ2）」= PFD-36配管1本に2種類のケーブルが入る
-- **※印**: 複数ケーブル行に同じ※番号がある場合、それらは同一の物理配管を共有。例: CV22sq-2CとIV5.5sqの両方にPFD-36 ※1とあれば、同じ35mのPFD-36を共有
-- **配管長 vs 配線長**: 共入れ区間では「配管長」（物理的な管の長さ）と「配線長」（管内を通るケーブルの長さ）が異なる場合がある
-- **配管合計の算出**: table_conduit_totals には**物理配管の実長**を記載する。※印で共有が示されている配管は重複カウントしない（例: CV22sq-2CとIV5.5sqがPFD-36 ※1 35mを共有 → PFD-36は35mとして1回だけカウント）
-- **ケーブル合計の算出**: table_wire_totals には各ケーブル種別の「全長」をそのまま記載（共入れの影響を受けない）
-
-### ソース2: 旗上げ（各区間の注記）の個別読み取り
-配線ルート上のテキスト注記（「旗上げ」と呼ばれる）を**1つ残らず全て**読み取ってください。
-旗上げとは、配線ルート線に沿って記載された各区間の詳細注記です。
-**注記の文字色は複数あります**：新設区間は緑色や赤色、既設区間は青色で記載されます。**色に関係なく全ての旗上げを読み取ってください。**
-
-例（新設区間 — 緑色テキスト）：
-- 「CV8sq-3C  露出 横引き  13m」
-- 「CV8sq-3C  露出 立上げ  3m」
-- 「E31  露出 横引き  13m」
-- 「CVT22sq  露出配管 PFD-28  5m」
-- 「CV22sq-2C+IV5.5sq  露出  既設キュービクル内配線・余長  6m」
-- 「CV22sq-2C+IV5.5sq  露出配管  PFD-36  30m」
-
-例（既設区間 — 青色テキスト）：
-- 「CVT38sq  埋設配管  FEP-30（既設）  15m」
-- 「CVT22sq  既設埋設  FEP-40  10m」
-- 「CV8sq-3C  既設配管  FEP-30  8m」
-既設区間は**青色**で描かれ、配管種別にFEP管（FEP-30、FEP-40等）が使われることが多いです。既設区間の旗上げも**必ず全て**読み取り、集計に含めてください。
-
-各旗上げについて以下を読み取ってください：
-1. **ケーブル種別**: CV8sq-3C、CVT22sq 等
-2. **配管種別**: E31、PFD-28 等（記載がある場合）
-3. **施工方法**: 露出/埋設/架空 + 横引き/立上げ/立下げ/EV充電設備用分電盤内部配線 等
-4. **距離**: Xm（数値）
-
-**「+」結合表記の解析（非常に重要）:**
-旗上げ注記でケーブル種別が「CV22sq-2C+IV5.5sq」のように「+」で結合されている場合、これは**複数のケーブル種別が同一経路・同一配管を並走している**ことを意味します。
-- 「CV22sq-2C+IV5.5sq 露出配管 PFD-28 5m」→ CV22sq-2Cに5m AND IV5.5sqに5m を**それぞれ個別に**カウント
-- flagged_annotations にはケーブル種別ごとに**別々の行**として記録する（cable_type: "CV22sq-2C" で1行、cable_type: "IV5.5sq" で1行）
-- **shared_conduit_count の設定（必須）**: 「+」で結合されたケーブルは同一配管を共有するため、分割した各エントリの shared_conduit_count に**「+」で結合されたケーブル種別数**を設定する。例:
-  - 「CV22sq-2C+IV5.5sq 露出配管 PFD-28 5m」→ 2種類が結合 → 各エントリの shared_conduit_count = **2**
-  - 「CV22sq-2C+IV5.5sq+CV8sq-3C 露出配管 PFD-36 10m」→ 3種類が結合 → 各エントリの shared_conduit_count = **3**
-- これにより配管の物理長が正しく算出される（5m÷2 + 5m÷2 = 5m。shared未設定だと5+5=10mの誤りになる）
-- 「+」で結合されたケーブルは2種類とは限らない（3種類以上の場合もある）
-
-**「Xm (Ym×N)」表記の解析（非常に重要 — 二重記録厳禁）:**
-旗上げ注記で距離の後に「(Ym×N)」の括弧表記がある場合、これは**Xmが総配線長、Ymが1台/1本あたりの長さ、Nが台数/本数**を示します。
-- 「CV8sq-3C 露出配管 PFD-36 22m (11m×2)」→ length_m = **22**（11mではない）。shared_conduit_count = 2
-- 「CV8sq-3C 露出 分電盤内配線・余長 4m (2m×2)」→ length_m = **4**（2mではない）
-- flagged_annotations には **Xm を length_m として1行だけ** 記録する
-- **絶対にYmの行とXmの行を別々に作成しない**。Xm の1行のみ
-- 括弧内の「(Ym×N)」は参考情報であり、別の旗上げとして記録してはならない
-
-**見落としやすい区間タイプ（必ず確認すること）:**
-以下の区間は見落としやすいです。必ず全て読み取ってください：
-- **既設埋設配管（FEP管等）** — 青色テキストの既設区間。FEP-30、FEP-40等の既設埋設配管を通るケーブル区間（例: CVT38sq 埋設 FEP-30 15m）。**最も見落とされやすい区間です**
-- **既設配管の立上げ・立下げ** — 既設埋設配管から地上に出る垂直区間（例: 既設FEP-30 立上げ 2m）
-- **既設キュービクル内配線・余長** — 電源元のキュービクル内部の配線と余長（例: 6m）
-- **既設ピット内配線** — 既設のピット（地下通路）内を通る配線（例: 3m）
-- **プルボックス内配線・余長** — プルボックス間の内部配線と余長（例: 2m）
-- **EV充電設備用分電盤内配線・余長** — 分電盤内部の配線と余長（例: 2m）
-- **立上げ・立下げ** — 配管の垂直部分（例: E-31 立上げ 4m、PFD-36 立下げ 2m）
-- **配管端部の短い区間** — プルボックス付近等の短い配管区間（例: E-31 3m）
-これらの小さな区間を合算すると全体の20〜40%を占めることがあります。1つでも漏れると統括表と大きな差異が出ます。
-
-**共入れ（共通配管）の読み取り — 旗上げ:**
-1本の配管に複数のケーブルが通る「共入れ」区間がある場合、旗上げの読み取りで**特に注意**してください：
-- **共入れ区間の特定**: 図面上で同一経路に複数ケーブルが並走し、1本の配管を共有している区間を見つける
-- **ケーブル別に個別カウント**: 共入れ区間でも、各ケーブル種別の距離はそれぞれ個別にカウントする。例: PFD-36 20m区間にCV22sq-2CとCV8sq-3Cが共入れ → CV22sq-2Cに20m加算 AND CV8sq-3Cに20m加算
-- **配管は物理長で1回カウント**: counted_conduit_totals では共入れ区間の配管は**物理的な管の長さを1回だけ**カウントする。同じ配管区間を複数ケーブル分として重複加算しない
-- **counted_conduit_totals 計算式（厳守）**: flagged_annotations を配管種別でグルーピングし、各エントリの length_m を shared_conduit_count で割った値を合計する（shared_conduit_count が 0 または 1 の場合はそのまま加算）。
-  具体例: PFD-36 の flagged_annotations が以下の3行の場合:
-    ① cable=CV22sq-2C / conduit=PFD-36 / 30m / shared_conduit_count=2
-    ② cable=IV5.5sq  / conduit=PFD-36 / 30m / shared_conduit_count=2
-    ③ cable=CV8sq-3C / conduit=PFD-36 / 10m / shared_conduit_count=0
-    → PFD-36 = 30÷2 + 30÷2 + 10÷1 = 15 + 15 + 10 = **40m** ← 正解
-    ✗ 誤り: 30 + 30 + 10 = 70m（共入れ区間を重複カウントしている）
-- **flagged_annotations への記録**: 共入れ区間は、そこを通る**ケーブル種別ごとに1行ずつ**記録する（同じ配管・同じ距離で cable_type が異なる複数行になる）。shared_conduit_count にケーブル本数を記載する
-- **旗上げ注記が1つしかない場合でも**: 図面上の旗上げが1ケーブル分しか記載されていなくても、統括表や配管経路から共入れが判明する場合は、全ケーブル分を flagged_annotations に記録する
-
-旗上げを全て読み取った上で、ケーブル種別・配管種別ごとに合算した値も算出してください。
-
-### ソース3: 記載線長（配線ルート線に沿った寸法値の実測）
-配線ルート線に沿って描かれた**寸法線（引出し線・矢印付きの距離表示）**を読み取ってください。
-旗上げ注記とは別に、ルート線自体に付された距離情報（寸法値）です。
-図面の縮尺を考慮し、各区間の寸法値をケーブル種別・配管種別ごとに合算してください。
-寸法線がない場合や旗上げと完全に同一の場合は、旗上げと同じ値を入れてください。
-**drawn_conduit_lengths も共入れ区間の配管を重複カウントしないでください（counted_conduit_totals と同じ計算式を使用）。**
-
-### 対象の配線（ケーブル）種別例
-CVT8sq、CVT14sq、CVT22sq、CVT38sq、CVT60sq、CVT100sq、CV5.5-3C、CV5sq-3C、CV8sq-3C、CV14sq-3C、CV22sq-3C、CV38sq-3C、CV60sq-3C、CV100sq-3C、VVF2mm-2C、VVF2mm-3C、IV5.5sq 等
-
-### 対象の配管種別例
-PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-42、HIVE-54、FEP-30、FEP-40、FEP-50、FEP-54、VE-22、VE-28、G28、G54、E25、E31、E39、CD-22 等
-
-### 重要
-- 旗上げは**1つも漏らさず**全て読み取ってください。読み落としは集計の食い違いの原因になります
-- 統括表・旗上げ・記載線長の値が一致しない場合でも、それぞれの数値をそのまま報告してください
-- 「EV充電設備用分電盤内部配線」「EV充電設備用分電盤〜配管端部」等の特殊区間も忘れずに読み取ってください
-- **共入れ（共通配管）に注意**: 1本の配管に複数ケーブルが入る「共入れ」がある場合、配管の物理長は1回だけカウントし、ケーブルは種別ごとに個別カウントする。統括表の※印や「共入れN」表記を見逃さないこと
-- **shared_conduit_count**: flagged_annotations の各エントリに記載。共入れでない区間は 0、共入れの場合はその配管を共有するケーブル種別数（2以上）を記載
+## 判定基準
+- **pass**: 要件/ルールを満たしている
+- **fail**: 必須項目で要件/ルールを満たしていない場合のみ使用
+- **warn**: 記載はあるが不明瞭、または部分的にしか満たしていない
+- **任意項目（必須: いいえ）のルール**: 該当しない場合は **pass**、該当するが不備がある場合は **warn**（failは使わない）
 
 ## 回答フォーマット（厳密にこのJSON形式で返してください）
 **重要: 回答はJSON以外のテキストを含めず、以下のJSON構造のみを返してください。コードフェンス（\`\`\`json ... \`\`\`）で囲んでも構いません。**
@@ -368,112 +468,17 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       "detail": "判定理由の詳細"
     }
   ],
-  "table_wire_totals": [
-    {
-      "type": "ケーブル種別（例: CVT22sq）",
-      "total_length_m": 数値
-    }
-  ],
-  "table_conduit_totals": [
-    {
-      "type": "配管種別（例: PFD-28）",
-      "total_length_m": 数値
-    }
-  ],
-  "counted_wire_totals": [
-    {
-      "type": "ケーブル種別（例: CVT22sq）",
-      "total_length_m": 数値,
-      "breakdown": {
-        "exposed_m": 数値,
-        "in_conduit_m": 数値,
-        "buried_m": 数値,
-        "aerial_m": 数値
-      }
-    }
-  ],
-  "counted_conduit_totals": [
-    {
-      "type": "配管種別（例: PFD-28）",
-      "total_length_m": 数値,
-      "method": "露出 | 埋設 | 架空"
-    }
-  ],
-  "drawn_wire_lengths": [
-    {
-      "type": "ケーブル種別（例: CVT22sq）",
-      "total_length_m": 数値
-    }
-  ],
-  "drawn_conduit_lengths": [
-    {
-      "type": "配管種別（例: PFD-28）",
-      "total_length_m": 数値
-    }
-  ],
-  "flagged_annotations": [
-    {
-      "cable_type": "ケーブル種別（例: CV8sq-3C）",
-      "conduit_type": "配管種別（例: E31）。配管記載がない場合は空文字",
-      "method": "施工方法（例: 露出 横引き、露出 立上げ、埋設 横引き、EV充電設備用分電盤内部配線 等）",
-      "length_m": 数値,
-      "shared_conduit_count": 0,
-      "note": "補足情報（区間の説明等。なければ空文字）"
-    }
-  ],
-  "overall_comment": "図面全体の総合コメント（400文字程度。NeV要件とマニュアル準拠の両面から評価）",
-  "detected_info": {
-    "facility_name": "施設名",
-    "drawing_title": "図面名称",
-    "project_name": "工事名",
-    "creator": "作成者",
-    "scale": "縮尺",
-    "creation_date": "作成日",
-    "wire_type": "電線種類",
-    "total_length": "配線全長",
-    "length_breakdown": "配線内訳の要約",
-    "wiring_methods": "配線方法一覧",
-    "conduit_types": "配管種類一覧",
-    "power_source": "電源元",
-    "equipment_count": "EV充電設備台数",
-    "surface_material": "路面状況",
-    "ancillary_equipment": "付帯設備",
-    "existing_equipment_info": "既設設備情報",
-    "page_count_analyzed": "解析ページ数"
-  }
+  "overall_comment": "図面全体の総合コメント（400文字程度。NeV要件とマニュアル準拠の両面から評価。Pass 1で読み取ったデータの整合性も含めて評価）"
 }
 \`\`\`
-
-## 判定基準
-- **pass**: 要件/ルールを満たしている
-- **fail**: 必須項目で要件/ルールを満たしていない場合のみ使用
-- **warn**: 記載はあるが不明瞭、または部分的にしか満たしていない
-- **任意項目（必須: いいえ）のルール**: 該当しない場合は **pass**、該当するが不備がある場合は **warn**（failは使わない）
 
 ## 重要な注意事項
 - 画像を隅々まで注意深く確認し、小さな文字やラベルも読み取ってください
 - 複数ページがある場合は全ページを確認してください
 - 「該当する場合のみ」の項目は、該当しない場合は **pass** としてください
 - found_text には図面から読み取れた具体的なテキスト・数値を記載（推測不可）
-- table_wire_totals / table_conduit_totals は統括表の記載値。統括表がない場合は空配列 []
-- counted_wire_totals / counted_conduit_totals は旗上げ注記から合算した値。読み取れない場合は空配列 []
-- drawn_wire_lengths / drawn_conduit_lengths は配線ルート線の寸法値から実測した値。寸法線がない場合は旗上げと同じ値を入れるか空配列 []
-- **統括表の数値検証**: 統括表の全長が内訳の合計と大きく乖離する場合（2倍以上差がある等）、読み取りミスの可能性が高いため数値を再確認すること
-- **よくある読み取りミス**: 隣の行の数値を読んでしまう、桁を間違える（15→150、183→18.3）、複数ケーブルの合計値を1種別の値として読んでしまう
-- 全てのチェック項目について必ず結果を返してください（スキップ不可）
-
-## 自己検証（回答前に必ず実行すること）
-回答のJSONを出力する**前に**、以下の検証を行い、大きな差異がある場合は旗上げの読み直しを行ってください：
-
-1. **旗上げ合計 vs 統括表の照合**: flagged_annotations の length_m をケーブル種別ごとに合算し、table_wire_totals の全長と比較する
-   - 差異が10%以上ある場合、旗上げの読み落としまたは重複記録がある
-   - 旗上げ > 統括表 の場合: 「(Xm×N)」表記の二重記録、「+」結合表記区間の重複記録がないか確認
-   - 旗上げ < 統括表 の場合: 内配線・余長、ピット内配線、立上げ・立下げの読み落としがないか確認
-2. **配管合計 vs 統括表の照合**: flagged_annotations の配管種別ごとに length_m÷shared_conduit_count を合計し、table_conduit_totals と比較する
-   - 差異がある場合: shared_conduit_count が正しく設定されているか確認。特に「+」結合表記から分割したエントリのshared_conduit_countが0のままになっていないか
-3. **「+」結合表記の shared_conduit_count 確認**: 「+」結合で分割した全エントリに配管がある場合、shared_conduit_count が結合ケーブル数と一致しているか確認
-4. **既設区間の読み取り確認**: 統括表にFEP管（FEP-30、FEP-40等）や「既設」の記載がある場合、旗上げからも既設区間（青色テキスト）を読み取れているか確認する
-5. **区間の網羅性確認**: 電源元（キュービクル等）からEV充電設備（分電盤）までの全経路が途切れなく繋がっているか確認する。途中に抜けがあれば旗上げを再確認する`;
+- Pass 1で読み取ったデータ（detected_info、旗上げ等）を活用して正確に判定してください
+- 全てのチェック項目について必ず結果を返してください（スキップ不可）`;
   }
 
   // ─── PDF → 画像変換 ────────────────────────────
@@ -661,9 +666,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
   }
 
   // ─── Gemini API 呼び出し ───────────────────────
-  async function callGemini(apiKey, images, type, modelId) {
-    const prompt = buildPrompt(type);
-
+  async function callGemini(apiKey, images, prompt, modelId) {
     const imageParts = images.map(img => ({
       inline_data: {
         mime_type: img.mimeType,
@@ -1002,9 +1005,36 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
   }
 
   // ─── メインチェック実行 ────────────────────────
-  async function check(apiKey, file, type, modelId) {
+  async function check(apiKey, file, type, modelId, onProgress) {
     const { images, pageCount } = await pdfToImages(file);
-    const geminiResult = await callGemini(apiKey, images, type, modelId);
+
+    // ── Pass 1: データ読み取り（統括表・旗上げ・記載線長・基本情報）──
+    if (onProgress) onProgress({ pass: 1, total: 2, message: '統括表・旗上げ・配線データを読み取り中...' });
+    const pass1Prompt = buildPass1Prompt(type);
+    const pass1Result = await callGemini(apiKey, images, pass1Prompt, modelId);
+
+    // ── Pass 2: NeV要件・マニュアル準拠の合否判定 ──
+    if (onProgress) onProgress({ pass: 2, total: 2, message: 'NeV要件・マニュアル準拠を判定中...' });
+    const pass2Prompt = buildPass2Prompt(type, pass1Result);
+    const pass2Result = await callGemini(apiKey, images, pass2Prompt, modelId);
+
+    // 2パスの結果をマージ（Pass 1: データ、Pass 2: 判定）
+    const geminiResult = {
+      ...pass1Result,
+      nev_results: pass2Result.nev_results,
+      manual_results: pass2Result.manual_results,
+      overall_comment: pass2Result.overall_comment,
+    };
+
+    // トークン使用量を合算
+    const usage1 = pass1Result._usageMetadata || {};
+    const usage2 = pass2Result._usageMetadata || {};
+    geminiResult._usageMetadata = {
+      promptTokenCount: (usage1.promptTokenCount || 0) + (usage2.promptTokenCount || 0),
+      candidatesTokenCount: (usage1.candidatesTokenCount || 0) + (usage2.candidatesTokenCount || 0),
+      totalTokenCount: (usage1.totalTokenCount || 0) + (usage2.totalTokenCount || 0),
+    };
+    geminiResult._model = pass2Result._model || pass1Result._model;
 
     const nev = aggregateNevResults(geminiResult, type);
     const manual = aggregateManualResults(geminiResult);

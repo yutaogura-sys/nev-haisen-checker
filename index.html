@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NeV 配線ルート図 要件判定チェックツール</title>
-  <link rel="stylesheet" href="css/style.css?v=20260411d">
+  <link rel="stylesheet" href="css/style.css?v=20260411e">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -173,8 +173,8 @@
     <section class="card card-loading" id="loadingSection" style="display:none;">
       <div class="card-body center">
         <div class="loading-spinner"></div>
-        <p class="loading-text">Gemini で配線ルート図を解析中...</p>
-        <p class="loading-subtext">高精度な読み取りを実行しています（30秒〜1分程度）</p>
+        <p class="loading-text">Pass 1/2: 統括表・旗上げ・配線データを読み取り中...</p>
+        <p class="loading-subtext">2パス方式で高精度な解析を実行しています（1〜2分程度）</p>
       </div>
     </section>
 
@@ -290,7 +290,7 @@
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   </script>
-  <script src="js/checker.js?v=20260411d"></script>
-  <script src="js/app.js?v=20260411d"></script>
+  <script src="js/checker.js?v=20260411e"></script>
+  <script src="js/app.js?v=20260411e"></script>
 </body>
 </html>

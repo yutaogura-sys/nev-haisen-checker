@@ -579,8 +579,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     els.loadingSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
+    // 2パス方式の進捗コールバック — ローディングテキストを更新
+    const onProgress = (info) => {
+      const loadingText = els.loadingSection.querySelector('.loading-text');
+      const loadingSub = els.loadingSection.querySelector('.loading-subtext');
+      if (loadingText) loadingText.textContent = `Pass ${info.pass}/${info.total}: ${info.message}`;
+      if (loadingSub) {
+        loadingSub.textContent = info.pass === 1
+          ? '統括表・旗上げ・記載線長を丁寧に読み取っています...'
+          : 'NeV要件・マニュアル準拠の合否を判定しています...';
+      }
+    };
+
     try {
-      const result = await DrawingChecker.check(state.apiKey, state.file, state.selectedType, state.selectedModel);
+      const result = await DrawingChecker.check(state.apiKey, state.file, state.selectedType, state.selectedModel, onProgress);
       lastResult = result;
       renderResult(result);
     } catch (e) {
