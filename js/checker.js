@@ -962,6 +962,69 @@ ${manualCheckListText}
     return str.replace(/\s+/g, '').replace(/[ー−–—]/g, '-').toUpperCase();
   }
 
+  // ─── 配管種別名の辞書ベース補正（Gemini誤読対策）──────
+  // 既知の配管プレフィックスと照合し、1文字違いの誤読を自動補正
+  const KNOWN_CONDUIT_PREFIXES = [
+    'PFD', 'HIVE', 'FEP', 'VE', 'E', 'G', 'CD', 'PF',
+  ];
+
+  function correctConduitType(rawType) {
+    if (!rawType) return rawType;
+    const upper = rawType.replace(/\s+/g, '').replace(/[ー−–—]/g, '-').toUpperCase();
+    // "PFP-54" → prefix="PFP", suffix="-54"
+    const m = upper.match(/^([A-Z]+)(-\d+.*)$/);
+    if (!m) return rawType;
+    const prefix = m[1];
+    const suffix = m[2];
+    // 既知プレフィックスに完全一致すればそのまま
+    if (KNOWN_CONDUIT_PREFIXES.includes(prefix)) return rawType;
+    // 1文字違い（編集距離1）の既知プレフィックスを探す
+    let bestMatch = null;
+    let bestDist = Infinity;
+    for (const known of KNOWN_CONDUIT_PREFIXES) {
+      const d = editDistance1(prefix, known);
+      if (d < bestDist) { bestDist = d; bestMatch = known; }
+    }
+    if (bestDist === 1 && bestMatch) {
+      return bestMatch + suffix;
+    }
+    return rawType;
+  }
+
+  // 編集距離（最大1まで高速判定、2以上は打ち切り）
+  function editDistance1(a, b) {
+    if (a === b) return 0;
+    const la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > 1) return 2;
+    if (la === lb) {
+      let diff = 0;
+      for (let i = 0; i < la; i++) { if (a[i] !== b[i]) diff++; if (diff > 1) return 2; }
+      return diff;
+    }
+    // 長さ1違い → 挿入/削除1回で一致するか
+    const longer = la > lb ? a : b;
+    const shorter = la > lb ? b : a;
+    let diff = 0;
+    for (let i = 0, j = 0; i < shorter.length; i++, j++) {
+      if (shorter[i] !== longer[j]) { diff++; if (diff > 1) return 2; j++; if (j >= longer.length || shorter[i] !== longer[j]) return 2; }
+    }
+    return 1;
+  }
+
+  // Gemini結果全体に配管種別補正を適用
+  function applyConduitCorrections(result) {
+    // table_conduit_totals
+    (result.table_conduit_totals || []).forEach(t => { t.type = correctConduitType(t.type); });
+    // counted_conduit_totals
+    (result.counted_conduit_totals || []).forEach(t => { t.type = correctConduitType(t.type); });
+    // drawn_conduit_lengths
+    (result.drawn_conduit_lengths || []).forEach(t => { t.type = correctConduitType(t.type); });
+    // flagged_annotations
+    (result.flagged_annotations || []).forEach(a => {
+      if (a.conduit_type) a.conduit_type = correctConduitType(a.conduit_type);
+    });
+  }
+
   // ─── 配管合計の再計算（共入れ重複カウント補正）───────
   // Gemini が counted_conduit_totals で共入れ区間を重複加算する問題への安全策
   // flagged_annotations から shared_conduit_count を使い物理配管長を正確に算出
@@ -1053,6 +1116,9 @@ ${manualCheckListText}
       totalTokenCount: (usage1.totalTokenCount || 0) + (usage2.totalTokenCount || 0),
     };
     geminiResult._model = pass2Result._model || pass1Result._model;
+
+    // 配管種別名の辞書ベース補正（PFP→PFD, F-39→E-39 等の誤読対策）
+    applyConduitCorrections(geminiResult);
 
     const nev = aggregateNevResults(geminiResult, type);
     const manual = aggregateManualResults(geminiResult);

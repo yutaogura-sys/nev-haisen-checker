@@ -764,6 +764,66 @@ document.addEventListener('DOMContentLoaded', () => {
       .toUpperCase();              // 大文字統一: "3c" → "3C"
   }
 
+  // ─── ファジーマッチング（編集距離1の孤立キー統合）──────
+  // 片方にしかないキー同士を編集距離で照合し、1文字違いなら統合
+  function fuzzyMergeKeys(merged) {
+    const keys = Object.keys(merged);
+    // 全ソースが揃っているキーと、片方だけのキーを分類
+    const incomplete = keys.filter(k => {
+      const r = merged[k];
+      return r.table === undefined || (r.counted === undefined && r.drawn === undefined);
+    });
+    if (incomplete.length < 2) return;
+
+    // 統括表のみ存在するキーと、旗上げ/記載線長のみ存在するキーを分離
+    const tableOnly = incomplete.filter(k => merged[k].table !== undefined && merged[k].counted === undefined && merged[k].drawn === undefined);
+    const countedOnly = incomplete.filter(k => merged[k].table === undefined && (merged[k].counted !== undefined || merged[k].drawn !== undefined));
+
+    for (const tk of tableOnly) {
+      let bestKey = null;
+      let bestDist = Infinity;
+      for (const ck of countedOnly) {
+        const d = levenshtein1(tk, ck);
+        if (d < bestDist) { bestDist = d; bestKey = ck; }
+      }
+      if (bestDist <= 1 && bestKey) {
+        // 統合: countedOnly のデータを tableOnly 側にマージ
+        const src = merged[bestKey];
+        const dst = merged[tk];
+        if (src.counted !== undefined) dst.counted = src.counted;
+        if (src.drawn !== undefined) dst.drawn = src.drawn;
+        if (src.rough !== undefined && dst.rough === undefined) dst.rough = src.rough;
+        // 表示名は長い方を採用
+        if (src.displayName.length > dst.displayName.length) {
+          dst.displayName = src.displayName;
+        }
+        delete merged[bestKey];
+        // countedOnly からも除外
+        const idx = countedOnly.indexOf(bestKey);
+        if (idx >= 0) countedOnly.splice(idx, 1);
+      }
+    }
+  }
+
+  // 編集距離（最大1まで高速判定）
+  function levenshtein1(a, b) {
+    if (a === b) return 0;
+    const la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > 1) return 2;
+    if (la === lb) {
+      let diff = 0;
+      for (let i = 0; i < la; i++) { if (a[i] !== b[i]) diff++; if (diff > 1) return 2; }
+      return diff;
+    }
+    const longer = la > lb ? a : b;
+    const shorter = la > lb ? b : a;
+    let diff = 0;
+    for (let i = 0, j = 0; i < shorter.length; i++, j++) {
+      if (shorter[i] !== longer[j]) { diff++; if (diff > 1) return 2; j++; if (j >= longer.length || shorter[i] !== longer[j]) return 2; }
+    }
+    return 1;
+  }
+
   function renderCompareTable(el, kind, tableData, countedData, drawnData, roughData) {
     const hasRough = roughData && roughData.length > 0;
     const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
@@ -787,6 +847,9 @@ document.addEventListener('DOMContentLoaded', () => {
     addSource(countedData, 'counted');
     addSource(drawnData, 'drawn');
     if (hasRough) addSource(roughData, 'rough');
+
+    // ファジーマッチング: 辞書補正で漏れた1文字違いキーを統合
+    fuzzyMergeKeys(merged);
 
     const keys = Object.keys(merged);
     if (keys.length === 0) {
@@ -1203,6 +1266,9 @@ document.addEventListener('DOMContentLoaded', () => {
       addSrc(countedData, 'counted');
       addSrc(drawnData, 'drawn');
       if (hasR) addSrc(roughData, 'rough');
+
+      // ファジーマッチング: 辞書補正で漏れた1文字違いキーを統合
+      fuzzyMergeKeys(merged);
 
       Object.keys(merged).forEach(key => {
         const r = merged[key];
