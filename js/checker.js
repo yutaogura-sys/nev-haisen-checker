@@ -971,8 +971,8 @@ ${manualCheckListText}
   function correctConduitType(rawType) {
     if (!rawType) return rawType;
     const upper = rawType.replace(/\s+/g, '').replace(/[ー−–—]/g, '-').toUpperCase();
-    // "PFP-54" → prefix="PFP", suffix="-54"
-    const m = upper.match(/^([A-Z]+)(-\d+.*)$/);
+    // "PFP-54" → prefix="PFP", suffix="-54" / "F31" → prefix="F", suffix="31"
+    const m = upper.match(/^([A-Z]+)(-?\d+.*)$/);
     if (!m) return rawType;
     const prefix = m[1];
     const suffix = m[2];
