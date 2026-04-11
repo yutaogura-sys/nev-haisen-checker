@@ -983,6 +983,24 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     }));
   }
 
+  // ─── Gemini元データと再計算値のマージ ──────────────
+  // Gemini の counted/drawn totals をベースに、recalc で算出した種別の値で上書き
+  // recalc にない種別は Gemini の元値を保持（データ消失防止）
+  function mergeTotals(geminiTotals, recalcTotals) {
+    const map = {};
+    // 1. Gemini の元データをベースとして登録
+    (geminiTotals || []).forEach(t => {
+      const key = normalizeKey(t.type);
+      if (key) map[key] = { ...t };
+    });
+    // 2. 再計算値で上書き（shared_conduit_count 補正済みの正確な値）
+    (recalcTotals || []).forEach(t => {
+      const key = normalizeKey(t.type);
+      if (key) map[key] = t;
+    });
+    return Object.values(map);
+  }
+
   // ─── メインチェック実行 ────────────────────────
   async function check(apiKey, file, type, modelId) {
     const { images, pageCount } = await pdfToImages(file);
@@ -992,11 +1010,15 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     const manual = aggregateManualResults(geminiResult);
 
     // flagged_annotations から配線・配管合計を再計算（Geminiの集計誤り補正）
+    // Geminiの元データをベースに、再計算値で上書きマージ（データ消失防止）
     const fa = geminiResult.flagged_annotations || [];
     const recalcWire = recalcWireFromAnnotations(fa);
     const recalcConduit = recalcConduitFromAnnotations(fa);
-    const wireTotals = recalcWire.length > 0 ? recalcWire : (geminiResult.counted_wire_totals || []);
-    const conduitTotals = recalcConduit.length > 0 ? recalcConduit : (geminiResult.counted_conduit_totals || []);
+    const wireTotals = mergeTotals(geminiResult.counted_wire_totals, recalcWire);
+    const conduitTotals = mergeTotals(geminiResult.counted_conduit_totals, recalcConduit);
+    // drawn は Gemini原本をベースに、再計算が存在する種別のみ上書き
+    const drawnWireTotals = mergeTotals(geminiResult.drawn_wire_lengths, recalcWire);
+    const drawnConduitTotals = mergeTotals(geminiResult.drawn_conduit_lengths, recalcConduit);
 
     return {
       nev,
@@ -1005,8 +1027,8 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       tableConduitTotals: geminiResult.table_conduit_totals || [],
       countedWireTotals: wireTotals,
       countedConduitTotals: conduitTotals,
-      drawnWireLengths: wireTotals,
-      drawnConduitLengths: conduitTotals,
+      drawnWireLengths: drawnWireTotals,
+      drawnConduitLengths: drawnConduitTotals,
       flaggedAnnotations: geminiResult.flagged_annotations || [],
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
