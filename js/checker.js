@@ -303,6 +303,13 @@ ${manualCheckListText}
 - **共入れ区間の特定**: 図面上で同一経路に複数ケーブルが並走し、1本の配管を共有している区間を見つける
 - **ケーブル別に個別カウント**: 共入れ区間でも、各ケーブル種別の距離はそれぞれ個別にカウントする。例: PFD-36 20m区間にCV22sq-2CとCV8sq-3Cが共入れ → CV22sq-2Cに20m加算 AND CV8sq-3Cに20m加算
 - **配管は物理長で1回カウント**: counted_conduit_totals では共入れ区間の配管は**物理的な管の長さを1回だけ**カウントする。同じ配管区間を複数ケーブル分として重複加算しない
+- **counted_conduit_totals 計算式（厳守）**: flagged_annotations を配管種別でグルーピングし、各エントリの length_m を shared_conduit_count で割った値を合計する（shared_conduit_count が 0 または 1 の場合はそのまま加算）。
+  具体例: PFD-36 の flagged_annotations が以下の3行の場合:
+    ① cable=CV22sq-2C / conduit=PFD-36 / 30m / shared_conduit_count=2
+    ② cable=IV5.5sq  / conduit=PFD-36 / 30m / shared_conduit_count=2
+    ③ cable=CV8sq-3C / conduit=PFD-36 / 10m / shared_conduit_count=0
+    → PFD-36 = 30÷2 + 30÷2 + 10÷1 = 15 + 15 + 10 = **40m** ← 正解
+    ✗ 誤り: 30 + 30 + 10 = 70m（共入れ区間を重複カウントしている）
 - **flagged_annotations への記録**: 共入れ区間は、そこを通る**ケーブル種別ごとに1行ずつ**記録する（同じ配管・同じ距離で cable_type が異なる複数行になる）。shared_conduit_count にケーブル本数を記載する
 - **旗上げ注記が1つしかない場合でも**: 図面上の旗上げが1ケーブル分しか記載されていなくても、統括表や配管経路から共入れが判明する場合は、全ケーブル分を flagged_annotations に記録する
 
@@ -313,6 +320,7 @@ ${manualCheckListText}
 旗上げ注記とは別に、ルート線自体に付された距離情報（寸法値）です。
 図面の縮尺を考慮し、各区間の寸法値をケーブル種別・配管種別ごとに合算してください。
 寸法線がない場合や旗上げと完全に同一の場合は、旗上げと同じ値を入れてください。
+**drawn_conduit_lengths も共入れ区間の配管を重複カウントしないでください（counted_conduit_totals と同じ計算式を使用）。**
 
 ### 対象の配線（ケーブル）種別例
 CVT8sq、CVT14sq、CVT22sq、CVT38sq、CVT60sq、CVT100sq、CV5.5-3C、CV5sq-3C、CV8sq-3C、CV14sq-3C、CV22sq-3C、CV38sq-3C、CV60sq-3C、CV100sq-3C、VVF2mm-2C、VVF2mm-3C、IV5.5sq 等
@@ -912,6 +920,29 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     return { items, categoryResults, overall, totalPass, totalItems: items.length, requiredPass, requiredTotal: totalRequired.length, requiredFail };
   }
 
+  // ─── 配管合計の再計算（共入れ重複カウント補正）───────
+  // Gemini が counted_conduit_totals で共入れ区間を重複加算する問題への安全策
+  // flagged_annotations から shared_conduit_count を使い物理配管長を正確に算出
+  function recalcConduitFromAnnotations(annotations) {
+    if (!annotations || annotations.length === 0) return [];
+    const calc = {};
+    const displayNames = {};
+    const methods = {};
+    annotations.forEach(a => {
+      if (!a.conduit_type) return;
+      const key = a.conduit_type.replace(/\s+/g, '').replace(/[ー−–—]/g, '-').toUpperCase();
+      if (!displayNames[key]) { displayNames[key] = a.conduit_type; methods[key] = a.method || ''; }
+      const len = a.length_m || 0;
+      const shared = Number(a.shared_conduit_count) || 0;
+      calc[key] = (calc[key] || 0) + (shared > 1 ? len / shared : len);
+    });
+    return Object.keys(calc).map(key => ({
+      type: displayNames[key],
+      total_length_m: Math.round(calc[key] * 10) / 10,
+      method: methods[key],
+    }));
+  }
+
   // ─── メインチェック実行 ────────────────────────
   async function check(apiKey, file, type, modelId) {
     const { images, pageCount } = await pdfToImages(file);
@@ -920,15 +951,19 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     const nev = aggregateNevResults(geminiResult, type);
     const manual = aggregateManualResults(geminiResult);
 
+    // 配管合計を flagged_annotations から再計算（共入れ重複カウント補正）
+    const recalcConduit = recalcConduitFromAnnotations(geminiResult.flagged_annotations);
+    const conduitTotals = recalcConduit.length > 0 ? recalcConduit : (geminiResult.counted_conduit_totals || []);
+
     return {
       nev,
       manual,
       tableWireTotals: geminiResult.table_wire_totals || [],
       tableConduitTotals: geminiResult.table_conduit_totals || [],
       countedWireTotals: geminiResult.counted_wire_totals || [],
-      countedConduitTotals: geminiResult.counted_conduit_totals || [],
+      countedConduitTotals: conduitTotals,
       drawnWireLengths: geminiResult.drawn_wire_lengths || [],
-      drawnConduitLengths: geminiResult.drawn_conduit_lengths || [],
+      drawnConduitLengths: conduitTotals,
       flaggedAnnotations: geminiResult.flagged_annotations || [],
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
@@ -1056,7 +1091,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       text += `\n■ 旗上げ（各区間の注記）一覧\n`;
       result.flaggedAnnotations.forEach((a, i) => {
         text += `  ${i + 1}. ${a.cable_type || a.conduit_type || '-'}`;
-        if (a.conduit_type) text += ` / ${a.conduit_type}`;
+        if (a.cable_type && a.conduit_type) text += ` / ${a.conduit_type}`;
         text += ` | ${a.method || '-'} | ${a.length_m != null ? a.length_m : '-'}m`;
         if ((Number(a.shared_conduit_count) || 0) > 1) text += ` [共入れ${a.shared_conduit_count}]`;
         if (a.note) text += ` (${a.note})`;

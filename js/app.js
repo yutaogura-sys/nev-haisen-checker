@@ -872,20 +872,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const tableConduitMap = {};
     if (tableConduit) tableConduit.forEach(t => { tableConduitMap[normalizeType(t.type)] = t.total_length_m; });
 
-    // 旗上げをケーブル種別でグループ化
+    // 旗上げをケーブル種別でグループ化（表示名も保持）
     const cableGroups = {};
+    const cableDisplayName = {};
     const conduitGroups = {};
+    const conduitDisplayName = {};
     annotations.forEach(a => {
       // ケーブル
       if (a.cable_type) {
         const ck = normalizeType(a.cable_type);
-        if (!cableGroups[ck]) cableGroups[ck] = [];
+        if (!cableGroups[ck]) { cableGroups[ck] = []; cableDisplayName[ck] = a.cable_type; }
         cableGroups[ck].push(a);
       }
       // 配管
       if (a.conduit_type) {
         const dk = normalizeType(a.conduit_type);
-        if (!conduitGroups[dk]) conduitGroups[dk] = [];
+        if (!conduitGroups[dk]) { conduitGroups[dk] = []; conduitDisplayName[dk] = a.conduit_type; }
         conduitGroups[dk].push(a);
       }
     });
@@ -898,14 +900,15 @@ document.addEventListener('DOMContentLoaded', () => {
       html += '<h4 class="totals-group-title" style="margin-top:12px;">&#128268; 配線（ケーブル）別 旗上げ一覧</h4>';
       cableKeys.forEach(cableType => {
         const items = cableGroups[cableType];
+        const displayName = cableDisplayName[cableType] || cableType;
         const sum = items.reduce((s, a) => s + (a.length_m || 0), 0);
         const roundedSum = Math.round(sum * 10) / 10;
-        const tableVal = tableWireMap[normalizeType(cableType)];
+        const tableVal = tableWireMap[cableType];
         const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== roundedSum;
 
         html += `<div class="anno-group">`;
         html += `<div class="anno-group-header">`;
-        html += `<span class="anno-type">${escapeHtml(cableType)}</span>`;
+        html += `<span class="anno-type">${escapeHtml(displayName)}</span>`;
         html += `<span class="anno-sum ${hasDiff ? 'diff' : 'match'}">`;
         html += `旗上げ合計: <strong>${roundedSum}m</strong>`;
         if (tableVal !== undefined && tableVal !== null) {
@@ -945,6 +948,7 @@ document.addEventListener('DOMContentLoaded', () => {
       html += '<h4 class="totals-group-title" style="margin-top:20px;">&#128295; 配管別 旗上げ一覧</h4>';
       conduitKeys.forEach(conduitType => {
         const items = conduitGroups[conduitType];
+        const displayName = conduitDisplayName[conduitType] || conduitType;
         // 共入れ区間は物理配管長として1回だけカウント（shared_conduit_count で按分）
         const sum = items.reduce((s, a) => {
           const len = a.length_m || 0;
@@ -952,13 +956,13 @@ document.addEventListener('DOMContentLoaded', () => {
           return s + (shared > 1 ? len / shared : len);
         }, 0);
         const roundedSum = Math.round(sum * 10) / 10;
-        const tableVal = tableConduitMap[normalizeType(conduitType)];
+        const tableVal = tableConduitMap[conduitType];
         const hasDiff = tableVal !== undefined && tableVal !== null && tableVal !== roundedSum;
         const hasShared = items.some(a => (Number(a.shared_conduit_count) || 0) > 1);
 
         html += `<div class="anno-group">`;
         html += `<div class="anno-group-header">`;
-        html += `<span class="anno-type">${escapeHtml(conduitType)}`;
+        html += `<span class="anno-type">${escapeHtml(displayName)}`;
         if (hasShared) html += ` <span style="font-size:11px;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;margin-left:4px;">共入れあり</span>`;
         html += `</span>`;
         html += `<span class="anno-sum ${hasDiff ? 'diff' : 'match'}">`;
