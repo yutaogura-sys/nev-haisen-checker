@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NeV 配線ルート図 要件判定チェックツール</title>
-  <link rel="stylesheet" href="css/style.css?v=20260411i">
+  <link rel="stylesheet" href="css/style.css?v=20260413a">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -214,6 +214,9 @@
           <h3 class="totals-section-title">&#128202; 配線・配管 比較</h3>
           <p class="totals-section-desc">①統括表（集計表の記載値）②旗上げ（緑注記の合算）③記載線長（寸法値の実測）を並列比較します。ラフ図Excelが取り込まれている場合は④列目に表示されます。</p>
 
+          <!-- 乖離サニティチェック警告 -->
+          <div class="discrepancy-warnings" id="discrepancyWarnings" style="display:none;"></div>
+
           <div class="totals-group">
             <h4 class="totals-group-title">&#128268; 配線（ケーブル）比較</h4>
             <div class="compare-table-wrap" id="compareWireTable"></div>
@@ -290,7 +293,7 @@
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   </script>
-  <script src="js/checker.js?v=20260411i"></script>
-  <script src="js/app.js?v=20260411i"></script>
+  <script src="js/checker.js?v=20260413a"></script>
+  <script src="js/app.js?v=20260413a"></script>
 </body>
 </html>

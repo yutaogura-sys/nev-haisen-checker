@@ -243,11 +243,30 @@ const DrawingChecker = (() => {
   - 「A+B+C PFD-36 10m」→ 3種類 → 各エントリの shared_conduit_count = **3**
 - これにより配管の物理長が正しく算出される（5m÷2 + 5m÷2 = 5m）
 
-**「Xm (Ym×N)」表記の解析（非常に重要 — 二重記録厳禁）:**
-距離の後に「(Ym×N)」の括弧表記がある場合、Xmが総配線長、Ymが1台あたりの長さ、Nが台数：
-- 「CV8sq-3C PFD-36 22m (11m×2)」→ length_m = **22**（11mではない）。shared_conduit_count = 2
+**「Xm (Ym×N)」/「(Ym×N本)」表記の解析（非常に重要 — 誤解釈多発）:**
+括弧内の「Ym×N」は「1本あたり Ym × N本並列 = 合計 Y×N m」を意味します。
+**判別ルール（先頭の Xm の有無で判定）:**
+
+**パターン①: 「Xm (Ym×N)」形式 — Xm が明記されている場合**
+→ Xm が既に合計値なので **length_m = X**（Ym ではない）
+- 「CV8sq-3C PFD-36 22m (11m×2)」→ length_m = **22**、shared_conduit_count = 2
 - 「CV8sq-3C 露出 分電盤内配線・余長 4m (2m×2)」→ length_m = **4**
-- flagged_annotations には **Xm を length_m として1行だけ** 記録する。**Ymの行を別に作成しない**
+
+**パターン②: 「(Ym×N)」または「Ym×N本」のみ — 先頭に Xm がない場合**
+→ 合計値が記載されていないので **自分で計算**: length_m = **Y × N**
+- 「PFD-28 (3.5m×4)」→ length_m = **14**（3.5 × 4、**3.5 ではない**）
+- 「PFD-36 5m×3本」→ length_m = **15**（5 × 3、**5 ではない**）
+- 「HIVE-42 (2.5m×6)」→ length_m = **15**（2.5 × 6、**2.5 ではない**）
+
+**どちらのパターンでも必ず守ること:**
+- flagged_annotations には **1行だけ** 記録する（Ym の行を別に作成しない）
+- shared_conduit_count は **この表記とは別の概念**（「+」結合の並列ケーブル数）なので混同しないこと
+- 括弧内の「×N」は立上げ・立下げの本数を示すことが多いので、合計長として扱うのが妥当
+
+**よくある誤り（絶対にしないこと）:**
+- ✗ 「(3.5m×4)」を length_m=3.5 として記録（×4 を無視）
+- ✗ 「22m (11m×2)」を length_m=44 として記録（×2 を二重適用）
+- ✗ 「(3.5m×4)」を 4行に分割して記録（×4本 を別エントリに分割）
 
 **見落としやすい区間タイプ（必ず確認すること）:**
 - **既設埋設配管（FEP管等）** — 青色テキストの既設区間。**最も見落とされやすい区間です**
@@ -1067,6 +1086,76 @@ ${manualCheckListText}
     }));
   }
 
+  // ─── 乖離サニティチェック（信頼度警告の検出）───────
+  // 統括表の値と、旗上げカウントの値が大きく乖離している場合に警告リストを返す。
+  // 読み取り自体は補正せず、ユーザー目視確認を促す情報として扱う。
+  //   ・絶対差 >= ABS_THRESHOLD_M かつ 相対差 >= REL_THRESHOLD の両方を満たす種別を抽出
+  //   ・片方にしか存在しない種別（missing）は欠落として報告
+  const ABS_THRESHOLD_M = 20;    // 20m以上の差で警告候補
+  const REL_THRESHOLD   = 0.30;  // 30%以上の差で警告候補
+
+  function detectDiscrepancies(tableTotals, countedTotals, kindLabel) {
+    const warnings = [];
+    const tableMap = {};
+    const countedMap = {};
+    (tableTotals || []).forEach(t => {
+      const k = normalizeKey(t.type);
+      if (k) tableMap[k] = { type: t.type, value: Number(t.total_length_m) || 0 };
+    });
+    (countedTotals || []).forEach(t => {
+      const k = normalizeKey(t.type);
+      if (k) countedMap[k] = { type: t.type, value: Number(t.total_length_m) || 0 };
+    });
+
+    const allKeys = new Set([...Object.keys(tableMap), ...Object.keys(countedMap)]);
+    allKeys.forEach(k => {
+      const t = tableMap[k];
+      const c = countedMap[k];
+      // 両方に存在する → 差が閾値超なら警告
+      if (t && c) {
+        const diff = Math.abs(t.value - c.value);
+        if (t.value === 0 && c.value === 0) return;
+        const base = Math.max(t.value, c.value);
+        const rel = base > 0 ? diff / base : 0;
+        if (diff >= ABS_THRESHOLD_M && rel >= REL_THRESHOLD) {
+          warnings.push({
+            kind: kindLabel,
+            type: t.type || c.type,
+            severity: 'diff',
+            tableValue: t.value,
+            countedValue: c.value,
+            diff: Math.round(diff * 10) / 10,
+            rel: Math.round(rel * 100),
+            message: `${kindLabel}「${t.type}」: 統括表${t.value}m vs 旗上げ合計${c.value}m（差${Math.round(diff*10)/10}m・${Math.round(rel*100)}%）`,
+          });
+        }
+      }
+      // 統括表にあるが旗上げに出てこない → 読み落とし疑い
+      else if (t && !c && t.value > 0) {
+        warnings.push({
+          kind: kindLabel,
+          type: t.type,
+          severity: 'missing_in_counted',
+          tableValue: t.value,
+          countedValue: 0,
+          message: `${kindLabel}「${t.type}」: 統括表に${t.value}m記載ありだが旗上げから検出されず（読み落とし疑い）`,
+        });
+      }
+      // 旗上げにあるが統括表に出てこない → 統括表誤読または統括表欠落
+      else if (!t && c && c.value > 0) {
+        warnings.push({
+          kind: kindLabel,
+          type: c.type,
+          severity: 'missing_in_table',
+          tableValue: 0,
+          countedValue: c.value,
+          message: `${kindLabel}「${c.type}」: 旗上げから${c.value}m検出されたが統括表に記載なし（統括表側の読み落とし疑い）`,
+        });
+      }
+    });
+    return warnings;
+  }
+
   // ─── Gemini元データと再計算値のマージ ──────────────
   // Gemini の counted/drawn totals をベースに、recalc で算出した種別の値で上書き
   // recalc にない種別は Gemini の元値を保持（データ消失防止）
@@ -1134,6 +1223,12 @@ ${manualCheckListText}
     const drawnWireTotals = mergeTotals(geminiResult.drawn_wire_lengths, recalcWire);
     const drawnConduitTotals = mergeTotals(geminiResult.drawn_conduit_lengths, recalcConduit);
 
+    // 乖離サニティチェック（統括表 vs 旗上げ合計）
+    const discrepancyWarnings = [
+      ...detectDiscrepancies(geminiResult.table_wire_totals, wireTotals, '配線'),
+      ...detectDiscrepancies(geminiResult.table_conduit_totals, conduitTotals, '配管'),
+    ];
+
     return {
       nev,
       manual,
@@ -1144,6 +1239,7 @@ ${manualCheckListText}
       drawnWireLengths: drawnWireTotals,
       drawnConduitLengths: drawnConduitTotals,
       flaggedAnnotations: geminiResult.flagged_annotations || [],
+      discrepancyWarnings,
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
       pageCount,

@@ -57,6 +57,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 3ソース比較テーブル
     compareWireTable:  $('compareWireTable'),
     compareConduitTable:$('compareConduitTable'),
+    // 乖離サニティチェック警告
+    discrepancyWarnings: $('discrepancyWarnings'),
     // 旗上げ
     annotationsContent:$('annotationsContent'),
     // ラフ図Excel
@@ -612,6 +614,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // ラフ図Excel取込セクションを表示
     if (els.roughUploadSection) els.roughUploadSection.style.display = '';
 
+    // 乖離サニティチェック警告（統括表 vs 旗上げ合計）
+    renderDiscrepancyWarnings(result.discrepancyWarnings);
+
     // 比較テーブル（ラフ図データがあれば4列目追加）
     renderCompareTable(els.compareWireTable, 'wire', result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths, state.roughWireData);
     renderCompareTable(els.compareConduitTable, 'conduit', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData);
@@ -822,6 +827,47 @@ document.addEventListener('DOMContentLoaded', () => {
       if (shorter[i] !== longer[j]) { diff++; if (diff > 1) return 2; j++; if (j >= longer.length || shorter[i] !== longer[j]) return 2; }
     }
     return 1;
+  }
+
+  // ─── 乖離サニティチェック警告の描画 ────────────────
+  // checker.js の detectDiscrepancies が返した警告リストをバッジ表示。
+  // 警告がなければ非表示。ユーザー目視確認を促すため数値補正は行わない。
+  function renderDiscrepancyWarnings(warnings) {
+    const el = els.discrepancyWarnings;
+    if (!el) return;
+    if (!warnings || warnings.length === 0) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+
+    const iconFor = sev => {
+      if (sev === 'missing_in_counted') return '&#9888;';   // ⚠
+      if (sev === 'missing_in_table')   return '&#10067;';  // ❓
+      return '&#128202;';                                    // 📊
+    };
+    const labelFor = sev => {
+      if (sev === 'missing_in_counted') return '旗上げ欠落疑い';
+      if (sev === 'missing_in_table')   return '統括表欠落疑い';
+      return '数値乖離';
+    };
+
+    let html = '<div class="discrepancy-header">';
+    html += '<span class="discrepancy-icon">&#128073;</span>';
+    html += `<span class="discrepancy-title">信頼度警告 (${warnings.length}件)</span>`;
+    html += '<span class="discrepancy-note">統括表と旗上げ合計に大きな差があります。目視で確認してください。</span>';
+    html += '</div><ul class="discrepancy-list">';
+
+    warnings.forEach(w => {
+      html += '<li class="discrepancy-item">';
+      html += `<span class="discrepancy-badge sev-${escapeHtml(w.severity)}">${iconFor(w.severity)} ${escapeHtml(labelFor(w.severity))}</span>`;
+      html += `<span class="discrepancy-msg">${escapeHtml(w.message)}</span>`;
+      html += '</li>';
+    });
+    html += '</ul>';
+
+    el.innerHTML = html;
+    el.style.display = '';
   }
 
   function renderCompareTable(el, kind, tableData, countedData, drawnData, roughData) {
