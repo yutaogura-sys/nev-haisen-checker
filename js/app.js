@@ -770,7 +770,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ─── ファジーマッチング（編集距離1の孤立キー統合）──────
-  // 片方にしかないキー同士を編集距離で照合し、1文字違いなら統合
+  // 片方にしかないキー同士を編集距離で照合し、1文字違いなら統合。
+  //
+  // 【checker.js の detectDiscrepancies との責務分離】
+  //   ・本関数（表示層）: 比較テーブルを見やすくするため孤立キーを視覚的に統合
+  //   ・detectDiscrepancies（データ層）: 乖離警告そのものを検出（警告を出すことが目的）
+  //   → 両者の入力は同じ（counted/table totals）だが、出力先と目的が異なる。
+  //   → 本関数で統合されても警告データ自体は消えない（既に別配列として確定済み）。
+  //   → 逆にデータ層で同様の統合を行うと、missing_in_* の警告が消失して
+  //     「OCR 誤読の疑いをユーザーに告げる」という警告層の目的が崩れる。
+  //   エラーチェック時: fuzzyMergeKeys の改変が警告件数に波及していないか確認すること。
   function fuzzyMergeKeys(merged) {
     const keys = Object.keys(merged);
     // 全ソースが揃っているキーと、片方だけのキーを分類
@@ -832,6 +841,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── 乖離サニティチェック警告の描画 ────────────────
   // checker.js の detectDiscrepancies が返した警告リストをバッジ表示。
   // 警告がなければ非表示。ユーザー目視確認を促すため数値補正は行わない。
+  //
+  // 【設計契約 / エラーチェック時に必ず保証すべき不変条件】
+  //   1. 全ての動的文字列（severity, message, labelFor 出力）は escapeHtml() を通すこと
+  //      → 現状 w.severity / w.message / labelFor(w.severity) の 3 箇所が該当。
+  //        Gemini 応答は本来英数字だが、将来ユーザー由来文字列が混入しても XSS を防ぐ。
+  //   2. warnings 配列が空 / null の場合は el.style.display='none' で完全に隠すこと
+  //      （前回実行の警告が残らないように innerHTML もクリア）
+  //   3. 警告は Excel 出力対象外（意図的除外）:
+  //      → Excel は「確定済み数値」を配るための成果物。警告は確認プロセス用。
+  //      → 将来 Excel に含めたい場合は excel.js に専用シートを追加する方針
+  //        （既存シートを汚染しないこと）。
+  //   4. 本関数は renderResult() の冒頭（他テーブル描画より先）で呼ばれる想定。
+  //      再実行時に DOM 残骸が残らないよう、最初に innerHTML をクリアしている。
   function renderDiscrepancyWarnings(warnings) {
     const el = els.discrepancyWarnings;
     if (!el) return;

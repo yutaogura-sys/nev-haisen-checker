@@ -160,6 +160,14 @@ const DrawingChecker = (() => {
   // Pass 1: データ読み取り特化 / Pass 2: NeV・マニュアル判定特化
 
   // NOTE: 旧 buildPrompt() は2パス化に伴い buildPass1Prompt / buildPass2Prompt に分離・削除済み
+  //
+  // ─── プロンプト設計ノート（エラーチェック時の確認ポイント） ─────
+  // Pass1 プロンプトには以下の解釈ルールが含まれる（回帰テスト対象）：
+  //   ・「(Xm×N)」表記ルール: 「合計m (Xm×N)」形式は合計値、「(Xm×N)」単独は X×N で計算
+  //   ・統括表レイアウトA/B/Cの判別手順（列ヘッダー優先）
+  //   ・JSONスキーマ: table_wire_totals / table_conduit_totals / counted_* / drawn_* / flagged_annotations
+  // これらを書き換える場合、detectDiscrepancies の警告パターンが
+  // 変化しないか（特に missing_in_* の誤検出が増えないか）を必ず確認すること。
   // ─── Pass 1 プロンプト（データ読み取り特化）───────────
   function buildPass1Prompt(type) {
     const typeLabel = type === 'kiso'
@@ -1087,12 +1095,37 @@ ${manualCheckListText}
   }
 
   // ─── 乖離サニティチェック（信頼度警告の検出）───────
-  // 統括表の値と、旗上げカウントの値が大きく乖離している場合に警告リストを返す。
-  // 読み取り自体は補正せず、ユーザー目視確認を促す情報として扱う。
-  //   ・絶対差 >= ABS_THRESHOLD_M かつ 相対差 >= REL_THRESHOLD の両方を満たす種別を抽出
-  //   ・片方にしか存在しない種別（missing）は欠落として報告
-  const ABS_THRESHOLD_M = 20;    // 20m以上の差で警告候補
-  const REL_THRESHOLD   = 0.30;  // 30%以上の差で警告候補
+  // 【目的】
+  //   統括表の値と、旗上げカウントの値が大きく乖離している場合に警告リストを返す。
+  //   読み取り自体は補正せず、ユーザー目視確認を促す情報として扱う（= 非破壊的監査層）。
+  //
+  // 【設計契約 / エラーチェック時に必ず保証すべき不変条件】
+  //   1. 本関数は既存の数値（table_*_totals / counted_*_totals）を改変しない（副作用なし）
+  //   2. 入力は必ず applyConduitCorrections 後の状態であること
+  //      （種別名の正規化が揃っていないと missing_in_* が誤検出される）
+  //   3. 戻り値の warning は { kind, type, severity, tableValue, countedValue, message } 形を満たす
+  //   4. severity は 'diff' | 'missing_in_counted' | 'missing_in_table' のいずれか
+  //   5. 同一 severity・同一 type の重複は normalizeKey による同一キー化で自然に排除される
+  //
+  // 【判定ロジック】
+  //   ・両方に存在 → |差| >= ABS_THRESHOLD_M かつ 相対差 >= REL_THRESHOLD の両方を満たす場合のみ警告
+  //     （AND条件にすることで小規模配線（例: 5m vs 8m = 60%差）の誤警告を抑える）
+  //   ・統括表のみ → 旗上げ読み落とし疑い（missing_in_counted）
+  //   ・旗上げのみ → 統括表読み落とし疑い（missing_in_table）
+  //   ・両方 0m は無視（ゼロ除算回避＆情報ゼロ）
+  //
+  // 【しきい値の根拠（変更時は必ずテスト追加）】
+  //   ABS_THRESHOLD_M = 20m: 現場で「誤読」と判断可能な最小単位（桁間違い:15m↔150m, 2m↔20m を確実に拾う）
+  //   REL_THRESHOLD   = 30%: 計測誤差・端数丸めでは生じ得ない差。Gemini 集計ミス（二重カウント等）の典型値
+  //   ※境界値テスト済み: 差20m・相対30% ちょうどは「警告」、19.9m や 29.9% は「警告しない」
+  //
+  // 【表示層との分担】
+  //   本関数はデータ層で「疑わしい」ことだけを検出。
+  //   一方、app.js の fuzzyMergeKeys は「表示統合のために 1 文字違いをマージ」する別責務。
+  //   両者を分離しているのは、データ層で安易に統合すると警告を取りこぼす（本来警告すべき
+  //   missing_in_* が消える）ため。エラーチェック時はこの分離を必ず維持すること。
+  const ABS_THRESHOLD_M = 20;    // 20m以上の差で警告候補（桁違い誤読の確実検出）
+  const REL_THRESHOLD   = 0.30;  // 30%以上の差で警告候補（集計ミスの典型差）
 
   function detectDiscrepancies(tableTotals, countedTotals, kindLabel) {
     const warnings = [];
@@ -1207,6 +1240,11 @@ ${manualCheckListText}
     geminiResult._model = pass2Result._model || pass1Result._model;
 
     // 配管種別名の辞書ベース補正（PFP→PFD, F-39→E-39 等の誤読対策）
+    // 【重要な実行順序 — 変更時は detectDiscrepancies の挙動回帰テスト必須】
+    //   applyConduitCorrections → mergeTotals → detectDiscrepancies の順序は不変条件。
+    //   補正前に detectDiscrepancies を呼ぶと、table 側「PFD-54」と counted 側「PFP-54」が
+    //   別キー扱いになり、両方とも missing_in_* として誤警告される。
+    //   エラーチェック時は「両側とも同じ正規化済み種別名になっているか」を必ず確認すること。
     applyConduitCorrections(geminiResult);
 
     const nev = aggregateNevResults(geminiResult, type);
@@ -1224,6 +1262,9 @@ ${manualCheckListText}
     const drawnConduitTotals = mergeTotals(geminiResult.drawn_conduit_lengths, recalcConduit);
 
     // 乖離サニティチェック（統括表 vs 旗上げ合計）
+    // ここで渡す counted 側は mergeTotals 済みの正確値（recalcWire/Conduit で再計算済）。
+    // table 側は Gemini 読み取りそのまま（統括表が「事実」として存在する以上、
+    // ここで補正すると統括表の誤読を隠蔽してしまうため、原本を保つ）。
     const discrepancyWarnings = [
       ...detectDiscrepancies(geminiResult.table_wire_totals, wireTotals, '配線'),
       ...detectDiscrepancies(geminiResult.table_conduit_totals, conduitTotals, '配管'),
