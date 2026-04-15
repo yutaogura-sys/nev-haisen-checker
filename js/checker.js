@@ -621,7 +621,7 @@ ${manualCheckListText}
     }
 
     // ArrayBuffer → base64
-    const bytes = new Uint8Array(arrayBuffer);
+    let bytes = new Uint8Array(arrayBuffer);
     let binary = '';
     // チャンク単位で変換（大きなPDFでのスタックオーバーフロー防止）
     const CHUNK = 8192;
@@ -629,6 +629,13 @@ ${manualCheckListText}
       binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
     }
     const base64 = btoa(binary);
+
+    // 【候補3: メモリ明示解放】
+    //   btoa 完了後、中間変数 (PDFサイズと同等のメモリを消費) は不要。
+    //   ローカル変数なので関数終了時に GC 対象だが、このあと size check を挟むため明示的に解放。
+    //   主な効果: 2パス方式で2回呼ばれた場合の累積メモリ圧を抑制。
+    binary = null;
+    bytes = null;
 
     if (base64.length > MAX_NATIVE_PDF_BASE64) {
       throw new Error(`PDFサイズが大きすぎます（${Math.round(base64.length / 1_000_000)}MB）。画像変換モードにフォールバックします。`);
@@ -762,6 +769,109 @@ ${manualCheckListText}
     return results;
   }
 
+  // ─── 遅延ヘルパー（リトライ用）──────────────────
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ─── Gemini API リトライラッパ ─────────────────
+  // 【設計契約】
+  //   callGemini を包み、一時的なエラーに対して自動リトライを行う。
+  //   ユーザー視点では「たまに詰まる Gemini」が「透明に回復する」挙動になる。
+  //
+  // 【リトライポリシー】
+  //   ・server_overload (503/500/high demand/overloaded) → 指数バックオフ 2s/4s/8s、最大3回
+  //   ・quota_exceeded (429) with retryAfterSec          → サーバー指定秒数 +1s 待機、1回のみ
+  //   ・ネットワーク接続エラー                              → 2s/4s、最大2回
+  //   ・その他（400系/JSONパース失敗/APIキー無効）        → リトライせず即 throw
+  //
+  // 【リトライしない理由（設計判断）】
+  //   ・400/401/403 は改善不能（キー無効・リクエスト不正）
+  //   ・parse_error はレスポンス自体が壊れており、再試行しても同じ失敗になる確率が高い
+  //   ・quota_exceeded で retryAfterSec 不明の場合、サーバー指示なしにリトライすると
+  //     ストーム化してさらにレート制限を悪化させる
+  //
+  // 【エラー継承】
+  //   最終的に throw する際は、callGemini から受け取った元の err オブジェクトを
+  //   そのまま投げる（.type, .suggestions, .retryAfterSec 等が app.js で参照されるため）。
+  //
+  // 【進捗通知】
+  //   onProgress が渡されていれば passContext (pass, total) を引き継いだうえで
+  //   retry: true フラグ付きで呼び出す。UI 側はメッセージだけ更新する実装で良い。
+  async function callGeminiWithRetry(apiKey, images, prompt, modelId, onProgress, passContext) {
+    const MAX_TRANSIENT = 3;
+    const MAX_QUOTA = 1;
+    const MAX_NETWORK = 2;
+    let transientCount = 0;
+    let quotaCount = 0;
+    let networkCount = 0;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        return await callGemini(apiKey, images, prompt, modelId);
+      } catch (err) {
+        // サーバー高負荷 → 指数バックオフ
+        if (err.type === 'server_overload' && transientCount < MAX_TRANSIENT) {
+          transientCount++;
+          const waitMs = 2000 * Math.pow(2, transientCount - 1); // 2000, 4000, 8000
+          const waitSec = Math.round(waitMs / 1000);
+          console.warn(`[Gemini] サーバー高負荷 (${err.statusCode || '?'})、${waitSec}秒後に再試行 (${transientCount}/${MAX_TRANSIENT})`);
+          if (onProgress && passContext) {
+            onProgress({
+              ...passContext,
+              message: `サーバー応答待機中... ${waitSec}秒後に再試行 (${transientCount}/${MAX_TRANSIENT})`,
+              retry: true,
+              retryReason: 'server_overload',
+            });
+          }
+          await sleep(waitMs);
+          continue;
+        }
+
+        // クォータ超過で retryAfterSec が判明 → 1回だけ指定時間待機リトライ
+        if (err.type === 'quota_exceeded' && err.retryAfterSec && quotaCount < MAX_QUOTA) {
+          quotaCount++;
+          const waitMs = (err.retryAfterSec + 1) * 1000; // +1 秒の余裕
+          const waitSec = Math.ceil(waitMs / 1000);
+          console.warn(`[Gemini] レート制限、${waitSec}秒後に再試行 (${quotaCount}/${MAX_QUOTA})`);
+          if (onProgress && passContext) {
+            onProgress({
+              ...passContext,
+              message: `レート制限のため ${waitSec}秒後に再試行中... (${quotaCount}/${MAX_QUOTA})`,
+              retry: true,
+              retryReason: 'quota_exceeded',
+            });
+          }
+          await sleep(waitMs);
+          continue;
+        }
+
+        // ネットワーク接続エラー → 短い backoff
+        // callGemini は networkErr を 'ネットワーク接続エラー: ...' で throw するのでメッセージで判別
+        if (err.message && err.message.indexOf('ネットワーク接続エラー') === 0 && networkCount < MAX_NETWORK) {
+          networkCount++;
+          const waitMs = 2000 * networkCount; // 2000, 4000
+          const waitSec = Math.round(waitMs / 1000);
+          console.warn(`[Gemini] ネットワークエラー、${waitSec}秒後に再試行 (${networkCount}/${MAX_NETWORK})`);
+          if (onProgress && passContext) {
+            onProgress({
+              ...passContext,
+              message: `ネットワークエラー、${waitSec}秒後に再試行 (${networkCount}/${MAX_NETWORK})`,
+              retry: true,
+              retryReason: 'network',
+            });
+          }
+          await sleep(waitMs);
+          continue;
+        }
+
+        // リトライ対象外 → 元のエラーをそのまま再スロー
+        throw err;
+      }
+    }
+  }
+
   // ─── Gemini API 呼び出し ───────────────────────
   async function callGemini(apiKey, images, prompt, modelId) {
     const imageParts = images.map(img => ({
@@ -795,19 +905,43 @@ ${manualCheckListText}
         maxOutputTokens,
       },
     };
+
+    // 【候補3: メモリ明示解放】
+    //   JSON.stringify は PDFサイズと同等の巨大な文字列を生成する。
+    //   fetch に渡した後は bodyStr の参照を null にして GC 対象化する。
+    //   (requestBody / imageParts の中の base64 も、これで参照カウントが下がる)
+    let bodyStr = JSON.stringify(requestBody);
+
     let response;
     try {
+      // 【候補2: no-cache 化】
+      //   キャッシュを経由させずに毎回オリジン直行させる。
+      //   ・cache: 'no-store'   : fetch API レベルで HTTP キャッシュを一切使わない
+      //   ・Cache-Control ヘッダ: 中間プロキシ・ブラウザキャッシュへの要求
+      //   【限界】 `Connection: close` は fetch では forbidden header のため設定不可。
+      //    HTTP/2 コネクションプールの詰まりは完全には回避できないが、
+      //    少なくともキャッシュ由来の 503 リプレイは防げる。
       response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent?key=${apiKey}`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store',
+            'Pragma': 'no-cache',
+          },
+          cache: 'no-store',
+          body: bodyStr,
         }
       );
     } catch (networkErr) {
+      // body は送信失敗時にも参照不要
+      bodyStr = null;
       throw new Error('ネットワーク接続エラー: インターネット接続を確認してください。');
     }
+
+    // 送信完了 → 巨大 body 文字列を即時解放（await fetch 戻り後は不要）
+    bodyStr = null;
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}));
@@ -1394,14 +1528,27 @@ ${manualCheckListText}
     }
 
     // ── Pass 1: データ読み取り（統括表・旗上げ・記載線長・基本情報）──
-    if (onProgress) onProgress({ pass: 1, total: 2, message: '統括表・旗上げ・配線データを読み取り中...' });
+    // 【候補1: 自動リトライ】
+    //   callGeminiWithRetry は 503/500/429(retry-after 付き)/ネットワークエラーを
+    //   透明に自動リトライする。passContext を渡すことで、リトライ中のメッセージも
+    //   pass/total 情報を保持した形で UI に流れる。
+    const pass1Context = { pass: 1, total: 2 };
+    if (onProgress) onProgress({ ...pass1Context, message: '統括表・旗上げ・配線データを読み取り中...' });
     const pass1Prompt = buildPass1Prompt(type);
-    const pass1Result = await callGemini(apiKey, images, pass1Prompt, modelId);
+    const pass1Result = await callGeminiWithRetry(apiKey, images, pass1Prompt, modelId, onProgress, pass1Context);
 
     // ── Pass 2: NeV要件・マニュアル準拠の合否判定 ──
-    if (onProgress) onProgress({ pass: 2, total: 2, message: 'NeV要件・マニュアル準拠を判定中...' });
+    const pass2Context = { pass: 2, total: 2 };
+    if (onProgress) onProgress({ ...pass2Context, message: 'NeV要件・マニュアル準拠を判定中...' });
     const pass2Prompt = buildPass2Prompt(type, pass1Result);
-    const pass2Result = await callGemini(apiKey, images, pass2Prompt, modelId);
+    const pass2Result = await callGeminiWithRetry(apiKey, images, pass2Prompt, modelId, onProgress, pass2Context);
+
+    // 【候補3: メモリ明示解放】
+    //   両パス完了後、images (PDF全体の base64 を含む巨大オブジェクト) への参照を解放。
+    //   以降の処理では images.length のみ使用するため、先に数値だけ抽出しておく。
+    //   これで後続の集計・レンダリング処理中に renderer メモリが落ち着く。
+    const imagesLength = images.length;
+    images = null;
 
     // 2パスの結果をマージ（Pass 1: データ、Pass 2: 判定）
     const geminiResult = {
@@ -1472,7 +1619,7 @@ ${manualCheckListText}
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
       pageCount,
-      analyzedPages: nativeMode ? pageCount : images.length,
+      analyzedPages: nativeMode ? pageCount : imagesLength,
       inputMode: nativeMode ? 'pdf-native' : 'jpeg-raster',
       costEstimate: estimateCost(geminiResult._usageMetadata, geminiResult._model),
     };
