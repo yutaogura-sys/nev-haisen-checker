@@ -1036,9 +1036,31 @@ ${manualCheckListText}
   }
 
   // ─── 種別名正規化（キー比較用）──────────────────
+  // 【設計契約】本関数はツール全体で使用される「唯一の」種別キー正規化器である。
+  //   ・checker.js 内部（detectDiscrepancies / mergeTotals / 旗上げ集計）で使用
+  //   ・app.js からは DrawingChecker.normalizeKey 経由で参照され、normalizeType として委譲
+  //   → 分裂させないこと。正規化ルールを変更する場合は本関数のみ修正し、
+  //     app.js 側は自動的に追随する（delegation pattern）。
+  //
+  // 【正規化ルール】
+  //   1. 空白（半角/全角/タブ/改行等）を除去
+  //   2. 乗算記号・x・全角Ｘ を統一（"CV8sq×3C" ≡ "CV8sqx3C" ≡ "CV8sqＸ3C"）
+  //      ※ /gi で半角X/xも一時 'x' に落とし、最後の toUpperCase で 'X' に収束
+  //   3. 各種ダッシュ（全角ハイフン・マイナス・emダッシュ等）を ASCII '-' に統一
+  //   4. 大文字化（"3c" ≡ "3C"、"pfd" ≡ "PFD"）
+  //
+  // 【改変時の注意】
+  //   ・ここを変えると mergeTotals のキー衝突挙動が変わる → 必ず detectDiscrepancies の
+  //     警告件数・compareTable のマージ件数がゼロ件以上増減していないか回帰テスト
+  //   ・normalizeType（app.js）との分裂を防ぐため、app.js 側の委譲が外れていないか
+  //     periodic に確認すること
   function normalizeKey(str) {
     if (!str) return '';
-    return str.replace(/\s+/g, '').replace(/[ー−–—]/g, '-').toUpperCase();
+    return str
+      .replace(/\s+/g, '')          // 空白除去
+      .replace(/[×xＸ]/gi, 'x')      // ×/x/Ｘ を一旦 'x' に統一
+      .replace(/[ー−–—]/g, '-')     // 各種ダッシュを ASCII ハイフンに
+      .toUpperCase();                // 大文字統一（'x' は 'X' に収束）
   }
 
   // ─── 配管種別名の辞書ベース補正（Gemini誤読対策）──────
@@ -1258,10 +1280,46 @@ ${manualCheckListText}
     allKeys.forEach(k => {
       const t = tableMap[k];
       const c = countedMap[k];
-      // 両方に存在する → 差が閾値超なら警告
+      // 両方に存在する
+      //   【設計契約 / severity 分類ロジック】
+      //   ・tableMap / countedMap は「キー登録されているだけで truthy なオブジェクト」なので、
+      //     value=0 のまま登録されている場合がある（Gemini が 0m を明示返却したケース）。
+      //   ・よって、素朴に `if (t && c)` で両方存在扱いすると、片方が 0 の場合に
+      //     severity='diff' が発火してしまう（正しくは missing_in_* ）。
+      //   ・以下では、両方 0 は無害として無視、片方だけ 0 のケースは missing_in_* に振り分け、
+      //     両方 >0 かつ閾値超のケースのみ 'diff' として警告する。
+      //   ・この分岐順は厳密に守ること（エラーチェック時の優先順位）。
       if (t && c) {
-        const diff = Math.abs(t.value - c.value);
+        // Case A: 両方とも 0m — 実質データなし、警告不要
         if (t.value === 0 && c.value === 0) return;
+        // Case B: 統括表側が 0m（実質未記載） → missing_in_table 扱い
+        //   「旗上げでは検出されているのに統括表に記載なし」と同じ意味
+        if (t.value === 0 && c.value > 0) {
+          warnings.push({
+            kind: kindLabel,
+            type: c.type || t.type,
+            severity: 'missing_in_table',
+            tableValue: 0,
+            countedValue: c.value,
+            message: `${kindLabel}「${c.type || t.type}」: 旗上げから${c.value}m検出されたが統括表に記載なし（統括表側の読み落とし疑い）`,
+          });
+          return;
+        }
+        // Case C: 旗上げ側が 0m（実質未検出） → missing_in_counted 扱い
+        //   「統括表には記載があるのに旗上げから検出できない」と同じ意味
+        if (c.value === 0 && t.value > 0) {
+          warnings.push({
+            kind: kindLabel,
+            type: t.type || c.type,
+            severity: 'missing_in_counted',
+            tableValue: t.value,
+            countedValue: 0,
+            message: `${kindLabel}「${t.type || c.type}」: 統括表に${t.value}m記載ありだが旗上げから検出されず（読み落とし疑い）`,
+          });
+          return;
+        }
+        // Case D: 両方 >0 — 通常の差分判定（絶対値 AND 相対値の両閾値超のみ警告）
+        const diff = Math.abs(t.value - c.value);
         const base = Math.max(t.value, c.value);
         const rel = base > 0 ? diff / base : 0;
         if (diff >= ABS_THRESHOLD_M && rel >= REL_THRESHOLD) {
@@ -1575,6 +1633,9 @@ ${manualCheckListText}
     verifyAllModels,
     pdfToPreview,
     resultToText,
+    // 種別キー正規化器（app.js から normalizeType として委譲利用される単一ソース）
+    // ※ この関数を app.js で再実装しないこと。ルール分裂による誤マージ/誤警告の原因になる。
+    normalizeKey,
     CATEGORIES,
     MODELS,
     COMMON_CHECKS,

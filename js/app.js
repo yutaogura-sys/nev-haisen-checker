@@ -761,13 +761,33 @@ document.addEventListener('DOMContentLoaded', () => {
   // ─── 比較テーブル描画（3〜4ソース対応）──────────────
 
   // ─── 種別名の正規化（表記揺れ吸収）────────────────
+  // 【設計契約 / 単一ソース原則】
+  //   本関数は DrawingChecker.normalizeKey（checker.js）への委譲ラッパーである。
+  //   過去、app.js と checker.js で別実装を持っていたため
+  //   "CV8sq×3C" と "CV8sq3C" が片方でしか統合されない、というキースペース分裂バグがあった。
+  //   現在は checker.js の normalizeKey が「唯一の」正規化器。
+  //
+  //   ・ここに独自の replace を追加してはならない（ルール分裂の再発防止）。
+  //   ・新しい正規化ルールが必要な場合は checker.js の normalizeKey を修正する。
+  //   ・万一 DrawingChecker が未ロードの場合に備えたフォールバックは残してあるが、
+  //     通常は unreachable。フォールバック発火時はコンソール警告を出す。
   function normalizeType(str) {
     if (!str) return '';
+    // ※ DrawingChecker は checker.js で `const` 宣言されている global。
+    //    `const` は window プロパティにならないため `typeof` で存在チェックする
+    //    （`window.DrawingChecker` は undefined になる）。
+    if (typeof DrawingChecker !== 'undefined'
+        && DrawingChecker
+        && typeof DrawingChecker.normalizeKey === 'function') {
+      return DrawingChecker.normalizeKey(str);
+    }
+    // フォールバック（通常到達しない）: checker.js 未ロード時の保険
+    console.warn('[normalizeType] DrawingChecker.normalizeKey unavailable; using fallback');
     return str
-      .replace(/\s+/g, '')        // スペース除去: "CV 8sq-3c" → "CV8sq-3c"
-      .replace(/[×xＸ]/gi, 'x')   // × → x 統一
-      .replace(/[ー−–—]/g, '-')   // 全角ダッシュ → ハイフン
-      .toUpperCase();              // 大文字統一: "3c" → "3C"
+      .replace(/\s+/g, '')
+      .replace(/[×xＸ]/gi, 'x')
+      .replace(/[ー−–—]/g, '-')
+      .toUpperCase();
   }
 
   // ─── ファジーマッチング（編集距離1の孤立キー統合）──────
