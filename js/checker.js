@@ -1146,6 +1146,68 @@ ${manualCheckListText}
     }));
   }
 
+  // ─── 配管共入れパターン解析（共入れ由来の差異識別用）───
+  // 【目的】
+  //   flagged_annotations を配管種別ごとに解析し、共入れ（複数ケーブル種別が
+  //   同一配管を共有）のパターン指標を返す。
+  //   比較テーブルで「旗上げ > 統括表」となった差異が、共入れ由来の二重計上か
+  //   別原因（Gemini誤読・読み落とし等）かを app.js が識別するための材料。
+  //
+  // 【背景 — なぜ必要か】
+  //   shared_conduit_count は「CV22sq-2C+IV5.5sq」のような + 表記（同一旗上げ内の
+  //   並走）しか捕捉できない。統括表で「※1」「(共入れ2)」として示される
+  //   ケーブル種別間の配管共有は旗上げ単独では判別できず、recalcConduit では
+  //   同一物理配管を二重計上する（例: Honda cars岐阜中央 PFD-36 14m→20m）。
+  //
+  // 【判定ロジック — app.js 側で使う条件】
+  //   旗上げ > 統括表 かつ 以下の両方が真なら「共入れ由来の可能性」を表示:
+  //     ・ cableTypes.size >= 2（複数ケーブル種別がこの配管を使用）
+  //     ・ hasPlusSharing（+ 表記由来の shared_conduit_count > 1 が1件以上ある）
+  //   hasStandalone（shared_conduit_count == 0 のエントリ）も補足情報として保持。
+  //
+  // 【副作用なし】
+  //   annotations は読み取り専用。既存の recalc/detectDiscrepancies には一切干渉しない。
+  function analyzeConduitSharing(annotations) {
+    const analysis = {};
+    (annotations || []).forEach(a => {
+      if (!a.conduit_type) return;
+      const key = normalizeKey(a.conduit_type);
+      if (!key) return;
+      if (!analysis[key]) {
+        analysis[key] = {
+          displayName: a.conduit_type,
+          cableTypes: new Set(),
+          hasPlusSharing: false,   // shared_conduit_count > 1 のエントリあり
+          hasStandalone: false,    // shared_conduit_count == 0 のエントリあり
+          entryCount: 0,
+        };
+      }
+      const info = analysis[key];
+      info.entryCount++;
+      if (a.cable_type) {
+        const ck = normalizeKey(a.cable_type);
+        if (ck) info.cableTypes.add(ck);
+      }
+      const shared = Number(a.shared_conduit_count) || 0;
+      if (shared > 1) info.hasPlusSharing = true;
+      else info.hasStandalone = true;
+    });
+    // Set は JSON シリアライズされないので配列＋サイズに変換しつつ
+    // displayNameMap も作って app.js から使いやすくする
+    const result = {};
+    Object.keys(analysis).forEach(k => {
+      const v = analysis[k];
+      result[k] = {
+        displayName: v.displayName,
+        cableTypeCount: v.cableTypes.size,
+        hasPlusSharing: v.hasPlusSharing,
+        hasStandalone: v.hasStandalone,
+        entryCount: v.entryCount,
+      };
+    });
+    return result;
+  }
+
   // ─── 乖離サニティチェック（信頼度警告の検出）───────
   // 【目的】
   //   統括表の値と、旗上げカウントの値が大きく乖離している場合に警告リストを返す。
@@ -1332,6 +1394,11 @@ ${manualCheckListText}
       ...detectDiscrepancies(geminiResult.table_conduit_totals, conduitTotals, '配管'),
     ];
 
+    // 配管共入れパターン解析（app.js が比較テーブルで「共入れ由来の可能性」を識別する材料）
+    // normalizeKey ベースのキーなので app.js の normalizeType とはキー空間が異なる点に注意。
+    // → app.js 側では displayName 経由で照合するか、再度 normalize する。
+    const conduitSharingAnalysis = analyzeConduitSharing(fa);
+
     return {
       nev,
       manual,
@@ -1343,6 +1410,7 @@ ${manualCheckListText}
       drawnConduitLengths: drawnConduitTotals,
       flaggedAnnotations: geminiResult.flagged_annotations || [],
       discrepancyWarnings,
+      conduitSharingAnalysis,
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
       pageCount,

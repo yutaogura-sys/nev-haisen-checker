@@ -379,8 +379,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 結果が表示中なら比較テーブルを再描画
       if (lastResult) {
-        renderCompareTable(els.compareWireTable, 'wire', lastResult.tableWireTotals, lastResult.countedWireTotals, lastResult.drawnWireLengths, state.roughWireData);
-        renderCompareTable(els.compareConduitTable, 'conduit', lastResult.tableConduitTotals, lastResult.countedConduitTotals, lastResult.drawnConduitLengths, state.roughConduitData);
+        renderCompareTable(els.compareWireTable, 'wire', lastResult.tableWireTotals, lastResult.countedWireTotals, lastResult.drawnWireLengths, state.roughWireData, null);
+        renderCompareTable(els.compareConduitTable, 'conduit', lastResult.tableConduitTotals, lastResult.countedConduitTotals, lastResult.drawnConduitLengths, state.roughConduitData, lastResult.conduitSharingAnalysis);
       }
     } catch (err) {
       console.error('ラフ図Excel解析エラー:', err);
@@ -397,8 +397,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 結果が表示中なら比較テーブルを再描画（ラフ図列を除去）
     if (lastResult) {
-      renderCompareTable(els.compareWireTable, 'wire', lastResult.tableWireTotals, lastResult.countedWireTotals, lastResult.drawnWireLengths, null);
-      renderCompareTable(els.compareConduitTable, 'conduit', lastResult.tableConduitTotals, lastResult.countedConduitTotals, lastResult.drawnConduitLengths, null);
+      renderCompareTable(els.compareWireTable, 'wire', lastResult.tableWireTotals, lastResult.countedWireTotals, lastResult.drawnWireLengths, null, null);
+      renderCompareTable(els.compareConduitTable, 'conduit', lastResult.tableConduitTotals, lastResult.countedConduitTotals, lastResult.drawnConduitLengths, null, lastResult.conduitSharingAnalysis);
     }
   }
 
@@ -619,8 +619,8 @@ document.addEventListener('DOMContentLoaded', () => {
     renderDiscrepancyWarnings(result.discrepancyWarnings);
 
     // 比較テーブル（ラフ図データがあれば4列目追加）
-    renderCompareTable(els.compareWireTable, 'wire', result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths, state.roughWireData);
-    renderCompareTable(els.compareConduitTable, 'conduit', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData);
+    renderCompareTable(els.compareWireTable, 'wire', result.tableWireTotals, result.countedWireTotals, result.drawnWireLengths, state.roughWireData, null);
+    renderCompareTable(els.compareConduitTable, 'conduit', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData, result.conduitSharingAnalysis);
 
     // 旗上げ詳細一覧
     renderAnnotationsCheck(result.flaggedAnnotations, result.tableWireTotals, result.tableConduitTotals);
@@ -893,7 +893,35 @@ document.addEventListener('DOMContentLoaded', () => {
     el.style.display = '';
   }
 
-  function renderCompareTable(el, kind, tableData, countedData, drawnData, roughData) {
+  // ─── 共入れ由来差の判定ヘルパー ──────────────────
+  // 【判定条件】すべて満たす場合、"共入れ重複の可能性" ヒントを表示：
+  //   1. kind === 'conduit'（配管のみ、配線には共入れ概念なし）
+  //   2. tv !== undefined && fv !== undefined && fv > tv（旗上げが統括表を上回る）
+  //   3. この配管種に対し、複数のケーブル種別が旗上げに存在（cableTypeCount >= 2）
+  //   4. かつ shared_conduit_count による + 表記共入れが1件以上ある（hasPlusSharing）
+  //   → 異なるケーブル種別間の物理配管共有が原因で旗上げが二重計上された可能性が高い
+  //
+  // 【sharingAnalysis のキー空間について】
+  //   checker.js の normalizeKey で生成されたキー。
+  //   一方この関数の merged は normalizeType 由来。両者の正規化粒度は僅かに異なる
+  //   可能性があるため、displayName 一致で補助照合する。
+  function isLikelySharingOvercount(kind, tv, fv, displayName, sharingAnalysis) {
+    if (kind !== 'conduit') return false;
+    if (tv === undefined || tv === null || fv === undefined || fv === null) return false;
+    if (fv <= tv) return false;
+    if (!sharingAnalysis) return false;
+    // キー直接照合 → 見つからなければ displayName マッチでフォールバック
+    const normKey = normalizeType(displayName);
+    let info = null;
+    for (const k of Object.keys(sharingAnalysis)) {
+      const v = sharingAnalysis[k];
+      if (normalizeType(v.displayName) === normKey) { info = v; break; }
+    }
+    if (!info) return false;
+    return info.cableTypeCount >= 2 && info.hasPlusSharing;
+  }
+
+  function renderCompareTable(el, kind, tableData, countedData, drawnData, roughData, sharingAnalysis) {
     const hasRough = roughData && roughData.length > 0;
     const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
 
@@ -981,6 +1009,10 @@ document.addEventListener('DOMContentLoaded', () => {
         html += `<td class="status-cell"><span class="diff-badge">${escapeHtml(diffs[0] || '差異あり')}</span>`;
         if (diffs.length > 1) {
           html += `<span class="diff-sub">${escapeHtml(diffs.slice(1).join(' / '))}</span>`;
+        }
+        // 共入れ由来の差異ヒント（配管のみ、旗上げ>統括表 かつ 複数ケーブルで共入れパターン該当時）
+        if (isLikelySharingOvercount(kind, tv, fv, row.displayName, sharingAnalysis)) {
+          html += `<span class="diff-hint-sharing">&#128279; 共入れ重複の可能性</span>`;
         }
         html += `</td>`;
       } else {

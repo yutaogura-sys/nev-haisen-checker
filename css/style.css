@@ -1642,6 +1642,21 @@ details[open] > .guide-toggle::before {
   margin-top: 2px;
 }
 
+/* 共入れ由来差ヒント（配管の旗上げ>統括表で異種ケーブル共入れが疑われる時） */
+/* 警告色（乖離警告の orange）と区別するため、情報色（青）を使用 */
+.compare-table .diff-hint-sharing {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #1e40af;              /* 濃い青 — 情報的注記であることを示す */
+  background: #dbeafe;         /* 薄い青背景 */
+  border: 1px solid #93c5fd;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
 /* --- ラフ図Excel取込セクション --- */
 .rough-upload-section {
   background: var(--gray-50);
