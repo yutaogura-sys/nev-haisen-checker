@@ -589,6 +589,58 @@ ${manualCheckListText}
     return { images, pageCount };
   }
 
+  // ─── PDF ネイティブ入力（テキスト層をGeminiに直接渡す）───
+  // 【設計意図】
+  //   pdf.js でラスタライズ → JPEG 変換するとテキスト層が失われ、
+  //   Gemini が OCR で再認識するため桁違い誤読（15m↔150m）や
+  //   類似文字誤読（PFD↔PFP）が発生しうる。
+  //   PDFをそのまま base64 で Gemini に渡すと、埋め込みテキスト層を
+  //   テキストとして直接抽出でき、精度が向上する。
+  //   テキスト層がない（スキャン画像のみの）PDFでも Gemini 側で OCR されるため問題なし。
+  //
+  // 【フォールバック】
+  //   base64 サイズが inline_data 上限（20MB）を超える場合や変換失敗時は
+  //   check() 側で従来の pdfToImages（JPEG変換）にフォールバックする。
+  //
+  // 【pdfToImages との違い】
+  //   pdfToImages: ページ単位でラスタ画像化 → 最大6ページ制限あり
+  //   pdfToNative: PDF全体を1つのblob → 全ページがGeminiに渡る（ページ制限なし）
+  const MAX_NATIVE_PDF_BASE64 = 18_000_000; // ~13.5MB (inline_data 20MB上限の安全マージン)
+
+  async function pdfToNative(file) {
+    const arrayBuffer = await file.arrayBuffer();
+
+    // ページ数はpdf.jsで取得（Gemini APIはページ数を返さないため）
+    let pageCount = 0;
+    try {
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+      pageCount = pdf.numPages;
+      pdf.destroy();
+    } catch (e) {
+      throw new Error('PDFファイルの読み込みに失敗しました。ファイルが破損しているか、パスワードで保護されている可能性があります。');
+    }
+
+    // ArrayBuffer → base64
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    // チャンク単位で変換（大きなPDFでのスタックオーバーフロー防止）
+    const CHUNK = 8192;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    const base64 = btoa(binary);
+
+    if (base64.length > MAX_NATIVE_PDF_BASE64) {
+      throw new Error(`PDFサイズが大きすぎます（${Math.round(base64.length / 1_000_000)}MB）。画像変換モードにフォールバックします。`);
+    }
+
+    return {
+      images: [{ base64, mimeType: 'application/pdf' }],
+      pageCount,
+      nativeMode: true,  // check() 側で解析ページ数の表示を分岐するためのフラグ
+    };
+  }
+
   // ─── プレビュー用画像生成 ──────────────────────
   async function pdfToPreview(file) {
     try {
@@ -1209,7 +1261,17 @@ ${manualCheckListText}
 
   // ─── メインチェック実行 ────────────────────────
   async function check(apiKey, file, type, modelId, onProgress) {
-    const { images, pageCount } = await pdfToImages(file);
+    // PDFネイティブ入力を優先（テキスト層の直接抽出で精度向上）
+    // サイズ超過やエラー時は従来のJPEG画像変換にフォールバック
+    let images, pageCount, nativeMode;
+    try {
+      ({ images, pageCount, nativeMode } = await pdfToNative(file));
+      console.log(`PDFネイティブモード: ${pageCount}ページ`);
+    } catch (nativeErr) {
+      console.warn('PDFネイティブ入力に失敗、画像変換にフォールバック:', nativeErr.message);
+      ({ images, pageCount } = await pdfToImages(file));
+      nativeMode = false;
+    }
 
     // ── Pass 1: データ読み取り（統括表・旗上げ・記載線長・基本情報）──
     if (onProgress) onProgress({ pass: 1, total: 2, message: '統括表・旗上げ・配線データを読み取り中...' });
@@ -1284,7 +1346,8 @@ ${manualCheckListText}
       overallComment: geminiResult.overall_comment || '',
       detectedInfo: geminiResult.detected_info || {},
       pageCount,
-      analyzedPages: images.length,
+      analyzedPages: nativeMode ? pageCount : images.length,
+      inputMode: nativeMode ? 'pdf-native' : 'jpeg-raster',
       costEstimate: estimateCost(geminiResult._usageMetadata, geminiResult._model),
     };
   }

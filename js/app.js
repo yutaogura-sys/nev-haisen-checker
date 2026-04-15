@@ -606,7 +606,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const typeLabel = state.selectedType === 'kiso' ? '基礎充電' : '目的地充電';
     const modelInfo = DrawingChecker.MODELS.find(m => m.id === state.selectedModel);
     const modelLabel = modelInfo ? modelInfo.name : state.selectedModel;
-    els.resultSummary.textContent = `${typeLabel} | ${modelLabel} | ${result.analyzedPages}\u30DA\u30FC\u30B8\u89E3\u6790`;
+    const modeLabel = result.inputMode === 'pdf-native' ? 'PDF直接読取' : '画像変換';
+    els.resultSummary.textContent = `${typeLabel} | ${modelLabel} | ${result.analyzedPages}ページ解析 | ${modeLabel}`;
 
     // 読み取り情報
     renderDetectedInfo(result.detectedInfo);
