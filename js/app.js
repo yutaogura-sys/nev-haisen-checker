@@ -471,6 +471,10 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `</div>`;
       }
 
+      // キャッシュクリア手順ガイド（折りたたみ式）
+      //   自動リトライが尽きた quota_exceeded では「ブラウザ側リセット」が有効なケースが多いため案内する。
+      html += renderResetGuide();
+
       html += `<div class="error-retry">`;
       html += `<button class="btn btn-retry" onclick="var s=this.closest('#errorSection')||this.closest('.error-card').parentElement;this.closest('.error-card').remove();if(s)s.style.display='none'">`;
       html += `&#128260; 閉じて再試行</button>`;
@@ -524,6 +528,11 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `<li>繰り返し発生する場合は、時間帯を変えてお試しください</li>`;
       html += `</ul>`;
       html += `</div>`;
+
+      // キャッシュクリア手順ガイド（折りたたみ式）
+      //   server_overload は HTTP/2 コネクション状態などブラウザ側起因のケースも多いため案内する。
+      html += renderResetGuide();
+
       html += `<div class="error-retry" style="display:flex;gap:8px;">`;
       html += `<button class="btn btn-primary" onclick="var s=document.getElementById('errorSection');if(s){s.style.display='none';s.innerHTML='';}document.getElementById('checkBtn').click();">`;
       html += `&#128260; リトライ</button>`;
@@ -1259,6 +1268,76 @@ document.addEventListener('DOMContentLoaded', () => {
     const div = document.createElement('div');
     div.textContent = String(str);
     return div.innerHTML;
+  }
+
+  // ─── OS 判定（キャッシュクリア手順のショートカット出し分け用）─
+  // 【設計契約】
+  //   Mac と Windows/Linux で修飾キーが異なるため判定する。
+  //   judgeは2択のみ（Mac or その他）。Linux は Ctrl キーが共通なので Windows 扱いで十分。
+  //   navigator.userAgent / navigator.platform は偽装可能だが、キャッシュクリア案内が
+  //   間違うだけで実害はないため「best effort」で良い。
+  function detectOS() {
+    const ua = (navigator.userAgent || '').toLowerCase();
+    const platform = (navigator.platform || '').toLowerCase();
+    if (/mac|iphone|ipad|ipod/.test(platform) || /mac os x|macintosh/.test(ua)) return 'mac';
+    return 'windows'; // Linux も含む（Ctrl キー共通のため）
+  }
+
+  // ─── キャッシュクリア手順ガイド（エラーカード内の展開セクション）─
+  // 【設計意図】
+  //   Gemini API の一時的エラー（server_overload / quota_exceeded）は、ブラウザ側の
+  //   HTTP/2 コネクション状態・メモリ圧迫・キャッシュ汚染が原因のことがある。
+  //   JS からは HTTP/2 コネクションプールや HTTP キャッシュを完全にはリセットできないため、
+  //   ユーザーに本物のブラウザ操作を案内する方式を採る。自動リトライが尽きた後の
+  //   「次の一手」として機能する。
+  //
+  // 【段階設計】
+  //   1. ハード再読込（Ctrl/⌘ + Shift + R）     — 最も軽量、ページ資源のみ再取得
+  //   2. 閲覧履歴削除（Ctrl/⌘ + Shift + Delete） — キャッシュ本体のクリア
+  //   3. ブラウザ完全再起動                       — HTTP/2 コネクション・メモリまで完全リセット
+  //   軽い順に試せば、無駄な作業消失を避けつつ段階的に強度を上げられる。
+  //
+  // 【ユーザーデータ保護】
+  //   API キーは localStorage 保存済みの場合は全リセット後も保持される旨を注記。
+  //   未保存の場合の再入力を意識させるための注意書きを末尾に置く。
+  function renderResetGuide() {
+    const os = detectOS();
+    const isMac = os === 'mac';
+    const modKey = isMac ? '&#8984;' : 'Ctrl';       // ⌘ or Ctrl
+    const osLabel = isMac ? 'Mac' : 'Windows / Linux';
+    return `
+      <details class="reset-guide">
+        <summary class="reset-guide-summary">
+          &#128259; サーバーエラーが続く場合の対処法（ブラウザキャッシュクリア手順）
+        </summary>
+        <div class="reset-guide-body">
+          <p class="reset-guide-desc">
+            ブラウザのキャッシュや接続状態が原因でエラーが続く場合、以下の手順で解消することがあります。
+            <strong>${osLabel}</strong> をお使いのため、下記のショートカットでお試しください（軽い順）。
+          </p>
+          <ol class="reset-guide-steps">
+            <li>
+              <strong>軽いリセット — ハード再読込</strong><br>
+              <kbd>${modKey}</kbd> <span class="reset-guide-plus">+</span> <kbd>Shift</kbd> <span class="reset-guide-plus">+</span> <kbd>R</kbd>
+              <span class="reset-guide-note">ページとスクリプトをサーバーから再取得します（最も軽い操作・作業データは保持）。</span>
+            </li>
+            <li>
+              <strong>強めのリセット — 閲覧履歴の削除</strong><br>
+              <kbd>${modKey}</kbd> <span class="reset-guide-plus">+</span> <kbd>Shift</kbd> <span class="reset-guide-plus">+</span> <kbd>Delete</kbd>
+              <span class="reset-guide-note">表示されるダイアログで「キャッシュされた画像とファイル」のみチェックし削除 → 本ページを再読込。</span>
+            </li>
+            <li>
+              <strong>最強 — ブラウザの完全再起動</strong><br>
+              全てのタブを閉じてブラウザを終了 → 再度起動してこのページを開く
+              <span class="reset-guide-note">HTTP 接続状態・メモリまで完全にリセットされます。上記2つで解消しない場合に有効。</span>
+            </li>
+          </ol>
+          <p class="reset-guide-footnote">
+            ※ 「このブラウザに保存する」にチェックを入れて API キーを保存している場合、キーは全手順後も保持されます。未保存の場合は再入力が必要です。
+          </p>
+        </div>
+      </details>
+    `;
   }
 
   // ─── 結果エクスポート ─────────────────────────
