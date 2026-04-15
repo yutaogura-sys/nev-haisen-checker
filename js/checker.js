@@ -830,7 +830,18 @@ ${manualCheckListText}
         }
 
         // クォータ超過で retryAfterSec が判明 → 1回だけ指定時間待機リトライ
-        if (err.type === 'quota_exceeded' && err.retryAfterSec && quotaCount < MAX_QUOTA) {
+        //
+        // 【設計契約 / 0値ガード】
+        //   err.retryAfterSec は Math.ceil(parseFloat(...)) または null のいずれか。
+        //   素朴に `&& err.retryAfterSec` と書くと、Gemini が "retry in 0s" を返したときに
+        //   0 が falsy 扱いされてリトライが silently スキップされる。
+        //   semantically には「0秒待機→即時リトライ」が正しい挙動なので、
+        //   `typeof === 'number' && >= 0` で明示的にゼロ許容する。
+        //   （null/undefined はリトライしない = サーバー指示なしでのストーム回避）
+        if (err.type === 'quota_exceeded'
+            && typeof err.retryAfterSec === 'number'
+            && err.retryAfterSec >= 0
+            && quotaCount < MAX_QUOTA) {
           quotaCount++;
           const waitMs = (err.retryAfterSec + 1) * 1000; // +1 秒の余裕
           const waitSec = Math.ceil(waitMs / 1000);
