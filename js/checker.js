@@ -960,7 +960,11 @@ ${manualCheckListText}
       const status = response.status;
 
       // クォータ超過（429）の検知と分類
-      if (status === 429 || errMsg.includes('Quota exceeded') || errMsg.includes('quota')) {
+      // 【M2 修正】メッセージ検知は大小文字非依存にする。
+      //   Google が将来 "Quota Exceeded" や全大文字 "QUOTA" 等に変更しても
+      //   detection を取りこぼさないよう toLowerCase() で正規化する。
+      //   主検知は status === 429 だがフォールバックとしてメッセージも確認。
+      if (status === 429 || errMsg.toLowerCase().includes('quota')) {
         const isFreeTier = errMsg.includes('free_tier');
         const retryMatch = errMsg.match(/retry in ([\d.]+)s/i);
         const retrySec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : null;
@@ -982,8 +986,17 @@ ${manualCheckListText}
         if (useModel.includes('pro')) {
           err.suggestions.push('Gemini 2.5 Flash や 2.0 Flash に切り替えると制限が緩和されます');
         }
-        if (retrySec) {
-          err.suggestions.push(`約${retrySec}秒後に再試行可能です`);
+        // 【M1 修正】retrySec=0 を落とさず suggestion メッセージ化する。
+        //   素朴に `if (retrySec)` と書くと 0 が falsy でスキップされ、
+        //   retry ロジック（callGeminiWithRetry の `typeof === 'number' && >= 0` ガード）
+        //   とメッセージ側で挙動が分裂していた。両者を揃える。
+        //   0秒は「すぐに再試行可能」の意味（Gemini サーバー側でレート制限が既に解除済み）。
+        if (typeof retrySec === 'number' && retrySec >= 0) {
+          err.suggestions.push(
+            retrySec === 0
+              ? 'すぐに再試行可能です（レート制限は解除されています）'
+              : `約${retrySec}秒後に再試行可能です`
+          );
         }
         throw err;
       }
