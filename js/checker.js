@@ -894,13 +894,23 @@ ${manualCheckListText}
 
     const useModel = modelId || 'gemini-2.5-flash';
 
-    // モデル別の最大出力トークン数
+    // ─── モデル別の最大出力トークン数 ───────────────
+    // 【設計契約 / 実測に基づくサイジング】
+    //   Pass 1 出力: ~5,000 tokens (統括表・旗上げ・線長・detected_info)
+    //   Pass 2 出力: ~3,000 tokens (判定結果・コメント)
+    //   → 実用上は 16K で十分。以前は 65K を割り当てていたが、
+    //     ・大きすぎる budget は Gemini の内部推論を冗長化させ、応答時間が延びる
+    //     ・タイムアウト・サーバー負荷の原因になりやすい
+    //     ・バラつき増大の副次要因
+    //   安全マージンとして実測の ~3 倍の 16K に引き締めた。
+    //   MAX_TOKENS で切れた場合は parse_error で明示的に検出される（callGemini L1055）ため、
+    //   仮に長くなっても致命的失敗にはならない。
     const maxTokensByModel = {
-      'gemini-2.5-pro':   65536,
-      'gemini-2.5-flash': 65536,
-      'gemini-2.0-flash': 8192,
+      'gemini-2.5-pro':   16384,
+      'gemini-2.5-flash': 16384,
+      'gemini-2.0-flash': 8192,   // 2.0 は元々 8K。維持。
     };
-    const maxOutputTokens = maxTokensByModel[useModel] || 65536;
+    const maxOutputTokens = maxTokensByModel[useModel] || 16384;
 
     const requestBody = {
       contents: [
@@ -911,8 +921,30 @@ ${manualCheckListText}
           ]
         }
       ],
+      // ─── 決定論的デコーディング設定 ───────────────
+      // 【設計契約 / 抽出タスクの再現性保証】
+      //   本アプリの主タスクは「PDF図面からの数値抽出」であり、
+      //   同じ入力に対しては同じ出力が返ることを期待する（ユーザー観測上の再現性）。
+      //
+      //   ・temperature=0    : 確率的サンプリングを完全無効化（常に最尤トークンを選ぶ）
+      //   ・topK=1           : トップ1候補のみを候補集合にする（完全貪欲）
+      //   ・topP=0           : 累積確率上位 0% = 実質トップ1のみ（temperature=0 と冗長だが明示）
+      //
+      //   【以前の設定（temperature=0.1）からの変更】
+      //     温度 0.1 は「ほぼ決定論的だが稀にブレる」領域。抽出タスクでは
+      //     ブレは純粋にノイズ（創造性は不要）なので 0 に固定する。
+      //     ユーザーから「同じ図面で 1 回目と 2 回目の結果が異なる」という
+      //     レビューがあり、これを解消するための変更。
+      //
+      //   【副作用】
+      //     ・Gemini が偶然にも誤読に収束した場合、同じ誤読を再現する。
+      //       → しかし誤読は別途 detectDiscrepancies で警告されるので検出可能。
+      //     ・"多様性のあるコメント" は生成しづらくなる（overall_comment がやや定型化）。
+      //       → 抽出精度の再現性の方が本タスクでは重要と判断。
       generationConfig: {
-        temperature: 0.1,
+        temperature: 0,
+        topK: 1,
+        topP: 0,
         maxOutputTokens,
       },
     };
