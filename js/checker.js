@@ -895,22 +895,32 @@ ${manualCheckListText}
     const useModel = modelId || 'gemini-2.5-flash';
 
     // ─── モデル別の最大出力トークン数 ───────────────
-    // 【設計契約 / 実測に基づくサイジング】
-    //   Pass 1 出力: ~5,000 tokens (統括表・旗上げ・線長・detected_info)
-    //   Pass 2 出力: ~3,000 tokens (判定結果・コメント)
-    //   → 実用上は 16K で十分。以前は 65K を割り当てていたが、
-    //     ・大きすぎる budget は Gemini の内部推論を冗長化させ、応答時間が延びる
-    //     ・タイムアウト・サーバー負荷の原因になりやすい
-    //     ・バラつき増大の副次要因
-    //   安全マージンとして実測の ~3 倍の 16K に引き締めた。
-    //   MAX_TOKENS で切れた場合は parse_error で明示的に検出される（callGemini L1055）ため、
-    //   仮に長くなっても致命的失敗にはならない。
+    // 【設計契約 / Gemini 2.5 thinking tokens を考慮したサイジング】
+    //   Gemini 2.5 Flash/Pro は暗黙的な内部推論 (thinking) を実行し、
+    //   thinking tokens は maxOutputTokens バジェットを消費する。
+    //   ・2.5 Pro は thinking を完全に無効化できない（thinkingBudget=0 は Flash のみ対応）
+    //   ・Dynamic thinking で最大 ~24K (Flash) / ~32K (Pro) 消費することがある
+    //
+    //   実測（リアル図面ベース）:
+    //     Pass 1 出力 (JSON): ~6,000-10,000 tokens (旗上げ多数 + detected_info 16項目)
+    //     Pass 2 出力 (JSON): ~5,000-8,000  tokens (51 check items × 日本語60-350文字)
+    //     Thinking (内部):    ~3,000-10,000 tokens (タスク複雑度で変動)
+    //
+    //   → 合計 ~15K-25K が現実的。32K マージンで 2.5 Pro の複雑図面にも対応。
+    //   以前は 65K を割り当てていたが、冗長 budget は推論遅延・サーバー負荷の原因。
+    //   32K は 65K の半分で負荷軽減しつつ thinking を吸収できる実用サイズ。
+    //
+    //   【MAX_TOKENS 到達時の挙動】
+    //     finishReason === 'MAX_TOKENS' が返る。本コードでは下記の2経路で明示処理:
+    //       a) text が空のまま返る場合 → 直接 parse_error に type 化（L1077 前の新規分岐）
+    //       b) JSON が途中で切れて text ありだがパース失敗 → JSON.parse catch で parse_error
+    //     どちらも app.js の parse_error カードで原因と対処が表示される。
     const maxTokensByModel = {
-      'gemini-2.5-pro':   16384,
-      'gemini-2.5-flash': 16384,
-      'gemini-2.0-flash': 8192,   // 2.0 は元々 8K。維持。
+      'gemini-2.5-pro':   32768,  // thinking tokens 分を確保（thinking 無効化不可）
+      'gemini-2.5-flash': 32768,  // 同上（thinking は dynamic で変動）
+      'gemini-2.0-flash': 8192,   // 2.0 は thinking なし。維持。
     };
-    const maxOutputTokens = maxTokensByModel[useModel] || 16384;
+    const maxOutputTokens = maxTokensByModel[useModel] || 32768;
 
     const requestBody = {
       contents: [
@@ -928,7 +938,17 @@ ${manualCheckListText}
       //
       //   ・temperature=0    : 確率的サンプリングを完全無効化（常に最尤トークンを選ぶ）
       //   ・topK=1           : トップ1候補のみを候補集合にする（完全貪欲）
-      //   ・topP=0           : 累積確率上位 0% = 実質トップ1のみ（temperature=0 と冗長だが明示）
+      //
+      //   【topP を意図的に指定しない理由】
+      //     初期案では topP=0 も併記していたが、以下の理由で削除:
+      //       1) temperature=0 + topK=1 の時点で候補集合は常に「トップ1」確定。
+      //          topP=0 を重ねても情報は増えず、純粋に冗長。
+      //       2) 一部の Gemini バックエンドで topP=0 がバリデーションエラー
+      //          （"topP must be > 0"）として拒絶される事例報告がある。
+      //          拒絶されるとリクエスト全体が 400 で失敗し、リトライでも復旧しない。
+      //       3) Google 公式の "deterministic decoding" サンプルも
+      //          temperature=0 + topK=1 のみで topP は触らない流儀。
+      //     → API 拒絶リスクを避けるため、未指定でデフォルトに任せる。
       //
       //   【以前の設定（temperature=0.1）からの変更】
       //     温度 0.1 は「ほぼ決定論的だが稀にブレる」領域。抽出タスクでは
@@ -944,7 +964,6 @@ ${manualCheckListText}
       generationConfig: {
         temperature: 0,
         topK: 1,
-        topP: 0,
         maxOutputTokens,
       },
     };
@@ -1074,6 +1093,37 @@ ${manualCheckListText}
         break;
       }
     }
+
+    // ─── MAX_TOKENS: 空テキストのケースを明示的に parse_error へ分岐 ───────────────
+    // 【設計契約 / Gemini 2.5 thinking tokens との相互作用】
+    //   Gemini 2.5 系は内部推論 (thinking) が maxOutputTokens バジェットを消費する。
+    //   極端なケースでは thinking だけでバジェットを使い切り、
+    //   finishReason='MAX_TOKENS' で text が空のまま返ることがある。
+    //
+    //   この分岐がない場合:
+    //     ・!text の generic Error（untyped）にフォールスルー
+    //     ・app.js 側で type 不明扱い → 汎用 "予期せぬエラー" カードになり
+    //       ユーザーは「なぜ失敗したか・どう対処すべきか」が分からない
+    //
+    //   この分岐があることで:
+    //     ・err.type='parse_error' に型付けされ、app.js の parse_error カードへ誘導
+    //     ・カードには「モデル変更 / 再試行」が対処として明示される
+    //     ・err.finishReason/err.model を添えてログで原因特定を容易化
+    //
+    //   【補足】 text 非空で MAX_TOKENS（JSON 途中切れ）は下の JSON.parse catch 経路で
+    //   既に parse_error に型付けされる。ここは空テキスト専用の先回り分岐。
+    if (!text && finishReason === 'MAX_TOKENS') {
+      const err = new Error(
+        `Gemini の応答がトークン上限 (${maxOutputTokens}) に達し、本文が空で返されました。` +
+        `内部推論 (thinking) がバジェットを使い切った可能性があります。` +
+        `モデルを変更するか、しばらく待ってから再試行してください。`
+      );
+      err.type = 'parse_error';
+      err.finishReason = finishReason;
+      err.model = useModel;
+      throw err;
+    }
+
     if (!text) {
       throw new Error('Gemini から有効なテキスト応答が得られませんでした。再試行してください。');
     }
