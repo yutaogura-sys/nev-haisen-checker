@@ -180,6 +180,28 @@ const DrawingChecker = (() => {
 
 ## 図面タイプ: ${typeLabel}
 
+## 【最初に判定すること】 図面のカラー判定
+**他のすべての作業に着手する前**に、まず以下を必ず判定してください。
+これは後段の色判定（配線色分け・埋設ハッチング・ケーブルプロテクター色等）すべての根拠になります。
+
+### 判定対象
+1. **図面全体に有彩色（赤・青・緑・オレンジ・橙・黄等）が 1 つでも含まれているか**
+   - 配線ルート線の色 / ハッチング塗り / 凡例の色見本 / 色付きテキスト等のいずれかに有彩色があれば「カラー」
+   - 完全にモノクロ（黒・白・グレースケールのみ）なら「モノクロ」
+2. **観測した色を網羅的に1文で要約**
+   - 例: 「配線ルート: 赤・青、ハッチング: 赤・緑、凡例: 4色」
+   - モノクロの場合: 「カラー要素なし（モノクロ図面）」
+
+### 判定結果は detected_info の以下フィールドに必ず記録
+- **is_color_drawing**: true（カラー） / false（モノクロ）
+- **color_observation_summary**: 上記の要約文
+
+### 注意事項（必ず守ること）
+- **「黒に見える線」「暗い線」も注意深く確認** — 暗い赤・暗い青・暗い緑が黒と誤認されやすい
+- **配線ルート図は通常カラー**。完全モノクロの図面は稀である前提で慎重に判定
+- **判定を行ってから後続の作業に進むこと** — この判定結果は後段の色観測（作業1-b、ハッチング観測等）と整合する必要がある
+- 不確実な場合は **is_color_drawing=true** 側に倒し、color_observation_summary に「不確実: 色微差あり」と注記
+
 ## 【作業1】図面基本情報の読み取り (detected_info)
 表題欄および図面全体から以下を読み取ってください（見つからない項目は空文字）：
 施設名（設置場所名称）、図面名称（「配線ルート図」等）、工事名、作成者（会社名または個人名）、縮尺、作成日、電線種類（使用されている全ケーブル種別）、配線全長、配線内訳の要約、配線方法一覧（露出/埋設/架空等）、配管種類一覧、電源元（受電盤/分電盤/キュービクル等）、EV充電設備台数、路面状況（アスファルト/コンクリート/土等）、付帯設備（プルボックス/ハンドホール/支柱等）、既設設備情報
@@ -207,6 +229,31 @@ const DrawingChecker = (() => {
 **重要**: この情報は後段の Pass 2 で「mc_color_coding（配線ルートの色分けルール）」判定の主要根拠になります。
 画像のみで色微差を判定するのは Gemini にとって難しいため、Pass 1 でテキスト化することで判定精度を上げます。
 慎重かつ正直に観測してください — 不確実な場合は空配列・空文字を返し、断定しないこと。
+
+### 【作業1-c】ハッチング色の観測（必須・埋設ハッチング・ケーブルプロテクター判定の根拠になります）
+配線ルート図には複数の種類の**ハッチング**（斜線・網掛け・塗りつぶし）が描かれます。各ハッチングの色を観測してください。
+
+**ハッチング色のマニュアル準拠ルール:**
+- **赤色ハッチング** = アスファルト/コンクリート埋設区間
+- **緑色ハッチング** = 土/砂利埋設区間
+- **オレンジ色ハッチング** = ケーブルプロテクター（CP2-60X3MBK 等）
+- 上記以外の色も観測したらすべて列挙
+
+**観測手順:**
+1. **図面上のすべてのハッチング・色塗りエリアを走査**
+   - 配線ルート上の埋設区間に塗られた色斜線
+   - 配線途中のケーブルプロテクター区間の塗り
+   - その他の色付き面状要素
+2. **各ハッチングの色名を文字で記録**（例: "赤", "緑", "オレンジ"）
+3. **各ハッチングの所在・用途を併記**（例: "埋設区間（赤、アスファルト想定）", "ケーブルプロテクター区間（オレンジ）"）
+
+**重要な注意事項:**
+- 凡例でハッチング色のルールが定義されている場合は color_legend_observed にその文言も含めて記録
+- 「配線色」と「ハッチング色」は別フィールドで記録（混在させない）
+- ハッチングが完全になければ空配列 []
+- **「該当区間がない（埋設なし・プロテクターなし）」と「区間はあるが色が見えない」は別**
+  - 区間自体がない場合: hatching_colors_observed=[]、hatching_locations=[]
+  - 区間はあるが色が確認できない場合: hatching_colors_observed=[]、hatching_locations=["埋設区間あり（色不明）"] のように所在のみ記録
 
 ## 【作業2】統括表（配線集計表）の記載値の読み取り
 図面内の統括表（配線集計表）から数値をそのまま読み取ってください。統括表がない場合は空配列 []。
@@ -505,9 +552,13 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     "surface_material": "路面状況",
     "ancillary_equipment": "付帯設備",
     "existing_equipment_info": "既設設備情報",
+    "is_color_drawing": "boolean（true=有彩色が1つでもある、false=完全モノクロ）。判定に迷う場合は true 側に倒す",
+    "color_observation_summary": "観測した色を網羅的に1文で要約（例: '配線ルート: 赤・青、ハッチング: 赤・緑、凡例: 4色'、モノクロなら 'カラー要素なし'）",
     "color_legend_observed": "凡例に記載されている色分けルールの全文（例: '赤線=新設配線、青線=既設配線、緑線=電力会社工事'）。凡例が見つからない場合は空文字",
     "wire_color_distinction": ["配線ルート線で実際に観測した色名の配列。例: ['赤', '青']。完全モノクロのみなら空配列 []"],
     "color_legend_location": "凡例の所在（例: '右下表題欄の下'）。見つからない場合は空文字",
+    "hatching_colors_observed": ["観測されたハッチング色名の配列。例: ['赤', '緑', 'オレンジ']。ハッチングが一切なければ空配列 []"],
+    "hatching_locations": ["各ハッチングの所在・用途の説明配列。例: ['埋設区間（赤、アスファルト想定）', 'ケーブルプロテクター（オレンジ）']。区間自体がなければ空配列"],
     "page_count_analyzed": "解析ページ数"
   }
 }
@@ -671,19 +722,32 @@ ${nevCheckListText}
 ### マニュアルチェック項目
 ${manualCheckListText}
 
-## 【特別注意】mc_color_coding（配線ルートの色分けルール）の判定について
-配線色判定は誤判定が発生しやすいため、以下のフローで慎重に判定してください。
+## 【特別注意】色関連チェックの判定について（共通ルール）
+色判定は誤判定が発生しやすいため、**すべての色関連チェック**で以下の共通フローを必ず実行してください。
 
-### 判定の手順（必ずこの順序で実行）
-1. **Pass 1 のデータを最優先で参照**:
-   - \`detected_info.color_legend_observed\`: 凡例の文言（空でなければ凡例あり）
-   - \`detected_info.wire_color_distinction\`: 観測された色名の配列
-   - \`detected_info.color_legend_location\`: 凡例の所在
-2. Pass 1 のデータが不十分な場合、図面画像を再確認
-3. 下記の判定マトリクスに従って status を決定
+### 共通: Pass 1 データを最優先で参照
+**画像のみで判定せず**、まず Pass 1 が抽出した以下フィールドを必ず参照:
+- \`detected_info.is_color_drawing\`: 図面全体がカラーかモノクロか
+- \`detected_info.color_observation_summary\`: 観測した色の網羅サマリ
+- \`detected_info.color_legend_observed\`: 凡例の文言
+- \`detected_info.wire_color_distinction\`: 配線ルート線の色配列
+- \`detected_info.color_legend_location\`: 凡例の所在
+- \`detected_info.hatching_colors_observed\`: ハッチング色の配列
+- \`detected_info.hatching_locations\`: ハッチング所在・用途の配列
 
-### 判定マトリクス（厳守）
-| 凡例 | 観測色 | status | 理由 |
+### 重要な共通注意事項
+- **\`is_color_drawing=true\` のとき、すべての色関連チェックを「fail」にすることは矛盾**です。慎重に判定してください
+- 「黒に見える線」でも、注意深く確認すると暗い赤・暗い青の場合があります。**安易にモノクロと断定しない**
+- Pass 1 の各色フィールドに値が記録されている場合、それは Pass 1 で観測された事実です。fail にする前に必ず再確認してください
+- \`found_text\` には Pass 1 の観測結果（色名・凡例文言・ハッチング情報）を必ず引用してください
+- \`detail\` には判定マトリクスのどの行に該当するか（例：「凡例あり + 2色以上視認 → pass」）を明記してください
+
+---
+
+### mc_color_coding（配線ルートの色分けルール）判定マトリクス
+**根拠フィールド**: \`color_legend_observed\`、\`wire_color_distinction\`、\`is_color_drawing\`
+
+| 凡例 | 配線色 | status | 理由 |
 |---|---|---|---|
 | あり | 2色以上 | **pass** | マニュアル準拠 |
 | あり | 1色のみ | **pass** | 凡例ベースの色分けは存在 |
@@ -692,11 +756,53 @@ ${manualCheckListText}
 | なし | 1色のみ | **warn** | 部分的な色分け |
 | なし | 0色（モノクロ） | **fail** | 完全に色分けなし |
 
-### 重要な注意事項
-- 「黒に見える線」でも、注意深く確認すると暗い赤・暗い青の場合があります。**安易にモノクロと断定しない**
-- Pass 1 の \`wire_color_distinction\` に色名が記録されている場合、それは Pass 1 で観測された事実です。fail にする前に必ず再確認してください
-- \`found_text\` には Pass 1 の観測結果（色名・凡例の有無・凡例文言）を必ず引用してください
-- \`detail\` には判定マトリクスのどの行に該当するか（例：「凡例あり + 2色以上視認 → pass」）を明記してください
+---
+
+### mc_burial_hatching（埋設ハッチング色の適合性）判定マトリクス
+**根拠フィールド**: \`hatching_colors_observed\`、\`hatching_locations\`、\`detected_info.surface_material\`
+**マニュアル準拠色**: アスファルト/コンクリート=**赤**、土/砂利=**緑**
+
+| 埋設区間 | ハッチング色 | status | 理由 |
+|---|---|---|---|
+| なし | - | **pass** | 該当なし（required: false の任意項目） |
+| あり | 赤 OR 緑 を含む | **pass** | マニュアル準拠 |
+| あり | 赤・緑以外（例: 黒、灰、青） | **warn** | 色不一致（マニュアル外） |
+| あり | ハッチングなし or hatching_colors_observed=[] | **warn** | 色塗りが視認できない（印刷起因の可能性） |
+| 不明 | - | **warn** | 埋設区間の有無が判別不能 |
+
+---
+
+### mc_cable_protector（ケーブルプロテクターの表記）判定マトリクス
+**根拠フィールド**: \`hatching_colors_observed\`、\`hatching_locations\`
+**マニュアル準拠色**: ケーブルプロテクター=**オレンジ**（CP2-60X3MBK 基準）
+
+| プロテクター区間 | ハッチング色 | status | 理由 |
+|---|---|---|---|
+| なし | - | **pass** | 該当なし（required: false の任意項目） |
+| あり | オレンジ OR 橙 を含む | **pass** | マニュアル準拠 |
+| あり | オレンジ以外 | **warn** | 色不一致 |
+| あり | ハッチングなし | **warn** | 色塗りが視認できない |
+
+---
+
+### new_existing_distinction（新設/既設の区別、目的地充電のみ）判定マトリクス
+**根拠フィールド**: \`wire_color_distinction\`、\`color_legend_observed\`、\`is_color_drawing\`
+
+| 既設設備 | 区別の手段 | status | 理由 |
+|---|---|---|---|
+| なし | - | **pass** | 該当なし（required: false） |
+| あり | 配線色 2色以上 | **pass** | 色分けで区別 |
+| あり | 凡例で色分け定義 | **pass** | 凡例で区別 |
+| あり | ページ分離（複数ページで分ける） | **pass** | ページ分離で区別 |
+| あり | 上記いずれもなし | **warn** | 区別が不明確 |
+
+### 矛盾検出（自己整合性チェック — 必ず実行）
+判定後に以下の矛盾がないか **自己チェック** してください。矛盾があれば再判定:
+- **\`is_color_drawing=true\` なのに mc_color_coding=fail**: 色は観測されているのに色分けなしと判定 → 矛盾
+- **\`hatching_colors_observed\` に色があるのに mc_burial_hatching=fail / mc_cable_protector=fail**: ハッチング色は観測されているのに該当チェック fail → 矛盾
+- **\`wire_color_distinction\` が 2色以上なのに new_existing_distinction=fail**: 色での区別は観測されているのに区別なしと判定 → 矛盾
+
+矛盾を検出した場合は、当該チェックを最低でも warn に抑え、detail に「Pass 1 観測値との矛盾あり、要手動確認」を明記してください。
 
 ## 判定基準
 - **pass**: 要件/ルールを満たしている
@@ -1491,15 +1597,18 @@ ${manualCheckListText}
     return { items, categoryResults, overall, totalPass, totalItems: items.length, requiredPass, requiredTotal: totalRequired.length, requiredFail };
   }
 
-  // ─── 色分け判定の自己矛盾検出（mc_color_coding 専用サニティチェック）──────
+  // ─── 色関連チェックの自己矛盾検出（多項目サニティチェック）──────
   // 【設計契約 / Pass 1 と Pass 2 の判定整合性を強制】
-  //   背景: Pass 1 の detected_info で色情報（color_legend_observed / wire_color_distinction）を
-  //   観測しているにもかかわらず、Pass 2 が画像のみで「黒線のみ」「白黒図面」と判定して
-  //   mc_color_coding を fail にする false-fail のレビュー報告がある。
+  //   背景: Pass 1 の detected_info で色情報（配線色・凡例・ハッチング色・全体カラー判定）を
+  //   観測しているにもかかわらず、Pass 2 が画像のみで「白黒図面」「色分けなし」と判定して
+  //   色関連チェック（mc_color_coding / mc_burial_hatching / mc_cable_protector /
+  //   new_existing_distinction）を fail にする false-fail のレビュー報告がある。
   //
   //   本関数は Pass 1 と Pass 2 の判定を突き合わせ、矛盾があれば status を warn に降格する：
-  //     ・Pass 1 で凡例ありまたは色1種類以上を観測 ＋ Pass 2 が fail → warn に降格
-  //     ・detail に「Pass 1 観測値と Pass 2 判定の不整合」を明記し、ユーザーに手動確認を促す
+  //     ・mc_color_coding:           wire_color / 凡例 / is_color_drawing / hatching の何らかの色観測あり
+  //     ・mc_burial_hatching:        hatching_colors_observed に「赤」「緑」を含む観測あり
+  //     ・mc_cable_protector:        hatching_colors_observed に「オレンジ」「橙」を含む観測あり
+  //     ・new_existing_distinction:  wire_color_distinction が 2 色以上 OR 凡例あり
   //
   //   降格のみ実装（昇格はしない）:
   //     ・false-fail（誤って不合格にする）を防ぐのが目的
@@ -1507,54 +1616,102 @@ ${manualCheckListText}
   //       なら Pass 2 が pass しても本関数は介入しない（矛盾検出の対象外）
   //
   //   【副作用】
-  //     ・geminiResult.manual_results 内の mc_color_coding エントリを直接ミューテートする
-  //       → 後続の aggregateManualResults はミューテート後の値を読む
+  //     ・geminiResult.manual_results / nev_results 内の対象エントリを直接ミューテートする
+  //       （new_existing_distinction は NeV 側、その他は manual 側に存在）
+  //       → 後続の aggregateManualResults / aggregateNevResults はミューテート後の値を読む
   //     ・元のステータスを残すため original_status フィールドを追加（デバッグ・監査用）
   //
-  //   【戻り値】 { downgraded: boolean, reason: string }（ログ・テレメトリ用途）
-  function applyColorCodingSanityCheck(geminiResult) {
+  //   【戻り値】 { downgrades: [{ id, reason }], count: number }（ログ・テレメトリ用途）
+  function applyColorRelatedSanityCheck(geminiResult) {
     const detectedInfo = geminiResult.detected_info || {};
-    const rawResults = geminiResult.manual_results || [];
+    const manualResults = geminiResult.manual_results || [];
+    const nevResults    = geminiResult.nev_results    || [];
 
-    const target = rawResults.find(r => r && r.id === 'mc_color_coding');
-    if (!target) {
-      return { downgraded: false, reason: 'mc_color_coding が manual_results に存在しない' };
-    }
-    if (target.status !== 'fail') {
-      return { downgraded: false, reason: `現状の status は ${target.status} なので降格対象外` };
-    }
-
-    // Pass 1 で色観測があったかを判定
+    // Pass 1 の色観測フィールドを抽出
     const legend = (detectedInfo.color_legend_observed || '').trim();
-    const colorsRaw = detectedInfo.wire_color_distinction;
-    const colors = Array.isArray(colorsRaw) ? colorsRaw.filter(c => c && String(c).trim()) : [];
-    const hasLegend = legend.length > 0;
-    const hasColors = colors.length > 0;
+    const wireColors = Array.isArray(detectedInfo.wire_color_distinction)
+      ? detectedInfo.wire_color_distinction.filter(c => c && String(c).trim()).map(String)
+      : [];
+    const hatchingColors = Array.isArray(detectedInfo.hatching_colors_observed)
+      ? detectedInfo.hatching_colors_observed.filter(c => c && String(c).trim()).map(String)
+      : [];
+    const isColorDrawing = detectedInfo.is_color_drawing === true;
+    const colorSummary = (detectedInfo.color_observation_summary || '').trim();
 
-    if (!hasLegend && !hasColors) {
-      return { downgraded: false, reason: 'Pass 1 でも色観測なし → fail 判定は妥当' };
-    }
-
-    // 矛盾検出: Pass 1 で色観測ありなのに Pass 2 が fail → warn に降格
-    target.original_status = target.status;
-    target.status = 'warn';
-
-    const observation = [];
-    if (hasLegend) observation.push(`凡例: 「${legend}」`);
-    if (hasColors) observation.push(`観測色: [${colors.join(', ')}]`);
-    const observationText = observation.join(' / ');
-
-    target.detail = (
-      `[自動降格 fail→warn] Pass 1 で色情報を観測（${observationText}）したにもかかわらず、` +
-      `Pass 2 が「色分けなし」と判定したため、判定不整合と見なし warn に降格しました。` +
-      `元の判定理由: ${target.detail || '（詳細なし）'}。` +
-      `お手元の図面で色分けの有無を直接ご確認ください。`
+    // ヘルパー: id でエントリを検索（manual と nev の両方を見る）
+    const findResult = (id) => (
+      manualResults.find(r => r && r.id === id) || nevResults.find(r => r && r.id === id) || null
     );
 
-    return {
-      downgraded: true,
-      reason: `Pass 1 観測 (${observationText}) と Pass 2 fail の矛盾`,
+    // ヘルパー: 降格処理（fail のみ対象、observation は理由文字列）
+    const downgrade = (target, observation) => {
+      target.original_status = target.status;
+      target.status = 'warn';
+      target.detail = (
+        `[自動降格 fail→warn] Pass 1 で色情報を観測（${observation}）したにもかかわらず、` +
+        `Pass 2 が「色分け/色塗りなし」と判定したため、判定不整合と見なし warn に降格しました。` +
+        `元の判定理由: ${target.detail || '（詳細なし）'}。` +
+        `お手元の図面で色分け/ハッチングを直接ご確認ください。`
+      );
     };
+
+    const downgrades = [];
+
+    // ── 1. mc_color_coding（配線ルートの色分けルール）──
+    const cc = findResult('mc_color_coding');
+    if (cc && cc.status === 'fail') {
+      const obs = [];
+      if (legend.length > 0)        obs.push(`凡例: 「${legend}」`);
+      if (wireColors.length > 0)    obs.push(`配線色: [${wireColors.join(', ')}]`);
+      if (hatchingColors.length > 0) obs.push(`ハッチング色: [${hatchingColors.join(', ')}]`);
+      if (isColorDrawing)           obs.push('is_color_drawing=true');
+      if (colorSummary && (legend.length || wireColors.length || hatchingColors.length || isColorDrawing)) {
+        obs.push(`観測サマリ: 「${colorSummary}」`);
+      }
+      if (obs.length > 0) {
+        downgrade(cc, obs.join(' / '));
+        downgrades.push({ id: 'mc_color_coding', reason: obs.join(' / ') });
+      }
+    }
+
+    // ── 2. mc_burial_hatching（埋設ハッチング色）──
+    //   赤=アスファルト/コンクリート、緑=土/砂利。これらが Pass 1 で観測されていれば降格対象。
+    const bh = findResult('mc_burial_hatching');
+    if (bh && bh.status === 'fail') {
+      const burialKeywords = ['赤', '緑', 'アスファルト', 'コンクリート', '土', '砂利'];
+      const matched = hatchingColors.filter(c => burialKeywords.some(k => c.includes(k)));
+      if (matched.length > 0) {
+        downgrade(bh, `埋設関連ハッチング色: [${matched.join(', ')}]`);
+        downgrades.push({ id: 'mc_burial_hatching', reason: matched.join(', ') });
+      }
+    }
+
+    // ── 3. mc_cable_protector（ケーブルプロテクター色）──
+    //   オレンジ/橙が Pass 1 で観測されていれば降格対象。
+    const cp = findResult('mc_cable_protector');
+    if (cp && cp.status === 'fail') {
+      const protectorKeywords = ['オレンジ', '橙'];
+      const matched = hatchingColors.filter(c => protectorKeywords.some(k => c.includes(k)));
+      if (matched.length > 0) {
+        downgrade(cp, `プロテクター色: [${matched.join(', ')}]`);
+        downgrades.push({ id: 'mc_cable_protector', reason: matched.join(', ') });
+      }
+    }
+
+    // ── 4. new_existing_distinction（新設/既設の区別、NeV 側）──
+    //   配線色 2 色以上、または凡例で色分けが定義されていれば降格対象。
+    const ned = findResult('new_existing_distinction');
+    if (ned && ned.status === 'fail') {
+      const obs = [];
+      if (wireColors.length >= 2) obs.push(`配線色 2 色以上: [${wireColors.join(', ')}]`);
+      if (legend.length > 0)      obs.push(`凡例: 「${legend}」`);
+      if (obs.length > 0) {
+        downgrade(ned, obs.join(' / '));
+        downgrades.push({ id: 'new_existing_distinction', reason: obs.join(' / ') });
+      }
+    }
+
+    return { downgrades, count: downgrades.length };
   }
 
   // ─── 種別名正規化（キー比較用）──────────────────
@@ -2099,14 +2256,17 @@ ${manualCheckListText}
     //   エラーチェック時は「両側とも同じ正規化済み種別名になっているか」を必ず確認すること。
     applyConduitCorrections(geminiResult);
 
-    // 色分け判定の自己矛盾検出（Pass 1 観測値 vs Pass 2 fail の不整合補正）
-    // 【実行順序】 aggregateManualResults より前で実行する不変条件。
-    //   geminiResult.manual_results を直接ミューテートして status を fail→warn に降格するため、
-    //   降格後の値を aggregateManualResults が読むよう、必ず先に呼ぶ。
-    //   降格は mc_color_coding 1項目のみで他のチェックには影響しない（副作用は局所化）。
-    const colorSanity = applyColorCodingSanityCheck(geminiResult);
-    if (colorSanity.downgraded) {
-      console.warn(`[mc_color_coding 自動降格] ${colorSanity.reason}`);
+    // 色関連チェックの自己矛盾検出（Pass 1 観測値 vs Pass 2 fail の不整合補正）
+    // 【実行順序】 aggregateManualResults / aggregateNevResults より前で実行する不変条件。
+    //   geminiResult.manual_results / nev_results を直接ミューテートして status を fail→warn に降格するため、
+    //   降格後の値を aggregate* が読むよう、必ず先に呼ぶ。
+    //   対象: mc_color_coding, mc_burial_hatching, mc_cable_protector, new_existing_distinction
+    //   （new_existing_distinction は NeV 側、他は manual 側）。
+    const colorSanity = applyColorRelatedSanityCheck(geminiResult);
+    if (colorSanity.count > 0) {
+      colorSanity.downgrades.forEach(d => {
+        console.warn(`[${d.id} 自動降格] ${d.reason}`);
+      });
     }
 
     const nev = aggregateNevResults(geminiResult, type);
