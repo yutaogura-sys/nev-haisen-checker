@@ -211,12 +211,43 @@ const DrawingChecker = (() => {
 ## 【作業2】統括表（配線集計表）の記載値の読み取り
 図面内の統括表（配線集計表）から数値をそのまま読み取ってください。統括表がない場合は空配列 []。
 
+### 【最重要】統括表数値の精度確保（桁検証ディシプリン）
+統括表の数値は配線・配管の合計値であり、誤読が後段の判定に直接影響します。以下を厳守してください。
+
+**1. 1〜3 桁数値が誤読されやすい**
+   統括表には全長（〜数百 m）、内訳（〜数十 m）、配管長（〜数十 m）など多様な桁数の数値が並ぶ。
+   特に注意:
+   - 「15 ↔ 150」「18 ↔ 180」「6 ↔ 66」「3 ↔ 33」のような桁数の見落とし
+   - 「3 ↔ 8」「1 ↔ 7」「5 ↔ 6」「4 ↔ 9」のような単一文字の混同
+   - 小さい文字サイズ・低解像度・隣接セルとの近接で混同が増える
+
+**2. 各数値を「桁ごとに確認」する手順**
+   - 数値全体の桁数（1桁か2桁か3桁か、小数点の有無）を最初に決定
+   - 各桁の文字を1つずつ識別
+   - 同列の上下の数値と整合するか確認（極端な桁違いは要再確認）
+
+**3. 「読み取れない」を表現する手段（ハルシネーション禁止）**
+   セルがあるが数値が読み取れない場合（解像度低い・印字かすれ・遮蔽等）:
+   - **推測値で穴埋めしない** — 推測値を入れると後段で「一致」と誤判定される silent failure になる
+   - confidence フィールドを "low" または "unreadable" に設定
+   - "unreadable" の場合は total_length_m を null にしてよい
+   - 「本当に 0m なのか、それとも読み取れないのか」を必ず区別する（0m を返すのは確実に 0m と読めた場合のみ）
+
+**4. confidence の判定基準**
+   - **high**: 数値を明確に読み取れた（鮮明・コントラスト十分）
+   - **medium**: 読めたが解像度・サイズ・近接干渉で確信度中程度
+   - **low**: 読み取りに自信なし。値は記録するが推測の可能性を示す
+   - **unreadable**: セルは存在するが完全に読み取り不能。total_length_m=null
+
 **統括表の読み取り手順（必ず従ってください）：**
 1. まず**列ヘッダー（見出し行）**を確認し、各列が何を表すか特定する
 2. 各ケーブル種別の行を**1行ずつ**読み取る
-3. 各行の「配線長」（=ケーブルの全長）の数値を正確に読み取る（桁数に注意: 15m と 150m、2m と 20m 等の誤読に注意）
+3. 各行の「配線長」（=ケーブルの全長）の数値を正確に読み取る（上記桁検証ディシプリンに従う）
 4. 同じ行の「内訳」（露出/管内/埋設等）の数値も全て読み取る
-5. **検証**: 配線長 = 内訳の合計 になるか確認。一致しない場合は再確認し修正
+5. **行内自己整合性検証（必須）**: 「配線長 = 露出+管内+埋設+架空 の内訳合計」 を手元計算で確認
+   - 絶対差 ≥ 5m または 相対差 ≥ 5% で乖離する場合は、その行の数値を桁ごとに再読
+   - 再読で訂正できない場合は confidence を "low" に設定（あえて入力した数値を信用しないことを後段に伝える）
+   - 隣接行（上下）のセルを誤って読んでいないかも併せて確認
 
 6. **統括表のレイアウトパターン（重要）:**
    統括表には複数のレイアウトが存在します。**必ず列ヘッダーで判断**してください。
@@ -242,6 +273,12 @@ const DrawingChecker = (() => {
 - **※印**: 複数ケーブル行に同じ※番号がある場合、同一の物理配管を共有
 - **配管合計の算出**: table_conduit_totals には**物理配管の実長**を記載。※印で共有が示されている配管は重複カウントしない。パターンBの統括表では「配管長」列の値を使う
 - **ケーブル合計の算出**: table_wire_totals には各ケーブル種別の「配線長」（全長）をそのまま記載。**配管長の値を誤って使わないこと**
+
+**マルチページ統括表の取り扱い（規模の大きい図面で発生）:**
+- 統括表が複数ページに分かれている場合（行が次ページに続く等）、**全ページの統括表を結合して 1 つの table_wire_totals / table_conduit_totals にまとめる**
+- 各エントリの source_page には「**そのケーブル種別/配管種別の行が記載されているページ番号**」を設定
+- 複数ページに同じケーブル種別の行が現れる場合（ページごとに分割表記）、合算した値を 1 件として記録し、source_page は最初の出現ページを設定
+- ページ間で数値が連続する表（例: page 1 に CVT8sq-3C 12m、page 2 に同種別 8m → 合計 20m）の場合、**1 行に統合**して total_length_m=20 にする
 
 ## 【作業3】旗上げ（各区間の注記）の全件読み取り
 配線ルート上のテキスト注記（「旗上げ」）を**1つ残らず全て**読み取ってください。
@@ -400,10 +437,20 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 \`\`\`json
 {
   "table_wire_totals": [
-    { "type": "ケーブル種別（例: CVT22sq）", "total_length_m": 数値 }
+    {
+      "type": "ケーブル種別（例: CVT22sq）",
+      "total_length_m": "数値（confidence='unreadable' の場合は null を許容）",
+      "confidence": "high | medium | low | unreadable",
+      "source_page": "整数（この値を読み取った統括表が記載されているページ番号、1-indexed）。単一ページなら 1"
+    }
   ],
   "table_conduit_totals": [
-    { "type": "配管種別（例: PFD-28）", "total_length_m": 数値 }
+    {
+      "type": "配管種別（例: PFD-28）",
+      "total_length_m": "数値（confidence='unreadable' の場合は null を許容）",
+      "confidence": "high | medium | low | unreadable",
+      "source_page": "整数（この値を読み取った統括表が記載されているページ番号、1-indexed）。単一ページなら 1"
+    }
   ],
   "counted_wire_totals": [
     {
@@ -467,6 +514,31 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 \`\`\`
 
 ## 自己検証（回答前に必ず実行すること — 抽象的に終わらせず、必ず手を動かして再走査すること）
+
+### 検証0: 統括表内の自己整合性（必ず最初に実行）
+旗上げ照合（検証1, 検証2）に進む前に、**統括表自体の妥当性を確認**してください。
+統括表の数値が誤っていると、後段の照合がすべて連鎖的に誤判定されます。
+
+1. **行内整合性**: 各ケーブル種別行で「全長 = 露出+管内+埋設+架空 の内訳合計」を手元計算で確認
+   - 絶対差 ≥ 5m または 相対差 ≥ 5% で乖離する場合、その行を桁ごとに再読
+   - 再読で訂正できなければ confidence を "low" に設定
+
+2. **配管長 vs 配線長の取り違えチェック（パターン B 統括表のみ）**:
+   - 「配線長」列と「配管長」列を取り違えていないか確認
+   - 同じケーブル種別で配線長 < 配管長 となっている場合は要再確認（通常は配線長 ≥ 配管長）
+
+3. **隣接行混同のチェック**:
+   - 各ケーブル種別の行が、その上下の別種別の行と数値を取り違えていないか確認
+   - 1〜2 桁数値（例: 5m, 8m）は特に隣接セルとの混同が起きやすい
+
+4. **confidence の付与**:
+   - 各 table_wire_totals / table_conduit_totals エントリに confidence を必ず付与
+   - 「読み取れた」確信が高ければ "high"、不確実なら "medium" または "low"、完全に読めなければ "unreadable"（total_length_m=null）
+   - **推測値で穴埋めする代わりに低 confidence を返すのが正しい振る舞い**
+
+5. **source_page の付与**:
+   - 各エントリの source_page に、その行が記載されているページ番号（1-indexed）を設定
+   - マルチページ統括表で異なるページにまたがる場合、最初の出現ページを記録
 
 ### 検証1: 旗上げ合計 vs 統括表の照合（ケーブル）
 flagged_annotations の length_m をケーブル種別ごとに合算し、table_wire_totals の全長と比較。
@@ -1777,10 +1849,72 @@ ${manualCheckListText}
     return hints.join(' ');
   }
 
+  // ─── 統括表 confidence ベースの警告検出 ─────────────
+  // 【目的】
+  //   Pass 1 が confidence='low' / 'unreadable' を返したセルを警告化。
+  //   従来の detectDiscrepancies は数値差分のみを見るため、
+  //   「Gemini が読み取れなかった」事実そのものを表面化できなかった。
+  //
+  // 【設計契約】
+  //   1. 副作用なし（tableTotals は読み取り専用）
+  //   2. severity='low_confidence' は detectDiscrepancies の severity 群と排他的に扱う
+  //      （重複警告を避けるため、detectDiscrepancies 側で同 typeKey をスキップ）
+  //   3. message は事実、hint は調査ガイドの分担を維持
+  //
+  // 【ハルシネーション抑止との連携】
+  //   Pass 1 プロンプトで「推測値で穴埋めせず confidence='low' を返す」よう指示している。
+  //   その結果として返された low/unreadable を本関数が拾い、ユーザーへ可視化する。
+  function detectLowConfidenceWarnings(tableTotals, kindLabel) {
+    const warnings = [];
+    (tableTotals || []).forEach(t => {
+      if (!t || !t.type) return;
+      const conf = String(t.confidence || '').toLowerCase();
+      if (conf !== 'low' && conf !== 'unreadable') return;
+
+      const isUnreadable = conf === 'unreadable';
+      const numVal = Number(t.total_length_m);
+      const hasValue = !isUnreadable && Number.isFinite(numVal);
+      const valueDisplay = isUnreadable
+        ? '読み取り不能'
+        : hasValue ? `${numVal}m（信頼度低）` : '数値なし';
+
+      const sourcePage = Number(t.source_page) || 0;
+      const pageHint = sourcePage > 0 ? `（該当ページ: ${sourcePage}）` : '';
+
+      warnings.push({
+        kind: kindLabel,
+        type: t.type,
+        severity: 'low_confidence',
+        tableValue: hasValue ? numVal : null,
+        countedValue: null,
+        confidence: conf,
+        sourcePage: sourcePage || null,
+        message: `${kindLabel}「${t.type}」: 統括表の値の信頼度が低い (confidence=${conf}, ${valueDisplay})`,
+        hint: (
+          isUnreadable
+            ? `Gemini が統括表のこのセルを読み取れませんでした。原本の統括表で「${t.type}」の値を直接ご確認ください。${pageHint}`
+            : `Gemini が読み取りに自信を持てませんでした。原本の統括表で「${t.type}」の値を直接ご確認ください。${pageHint}`
+        ),
+      });
+    });
+    return warnings;
+  }
+
   function detectDiscrepancies(tableTotals, countedTotals, kindLabel, annotations) {
     const warnings = [];
     const tableMap = {};
     const countedMap = {};
+    // confidence='low' / 'unreadable' のキーは detectLowConfidenceWarnings 側で
+    // 既に専用警告が発火されるため、本関数では重複警告を避けるためスキップする。
+    const lowConfidenceKeys = new Set();
+    (tableTotals || []).forEach(t => {
+      if (!t || !t.type) return;
+      const conf = String(t.confidence || '').toLowerCase();
+      if (conf === 'low' || conf === 'unreadable') {
+        const k = normalizeKey(t.type);
+        if (k) lowConfidenceKeys.add(k);
+      }
+    });
     (tableTotals || []).forEach(t => {
       const k = normalizeKey(t.type);
       if (k) tableMap[k] = { type: t.type, value: Number(t.total_length_m) || 0 };
@@ -1803,6 +1937,10 @@ ${manualCheckListText}
       //   ・以下では、両方 0 は無害として無視、片方だけ 0 のケースは missing_in_* に振り分け、
       //     両方 >0 かつ閾値超のケースのみ 'diff' として警告する。
       //   ・この分岐順は厳密に守ること（エラーチェック時の優先順位）。
+      // 統括表側が low/unreadable confidence の場合は detectLowConfidenceWarnings が
+      // 既に専用警告を発火しているため、ここでは重複警告を避けてスキップ。
+      if (lowConfidenceKeys.has(k)) return;
+
       if (t && c) {
         // Case A: 両方とも 0m — 実質データなし、警告不要
         if (t.value === 0 && c.value === 0) return;
@@ -1989,7 +2127,13 @@ ${manualCheckListText}
     // ここで渡す counted 側は mergeTotals 済みの正確値（recalcWire/Conduit で再計算済）。
     // table 側は Gemini 読み取りそのまま（統括表が「事実」として存在する以上、
     // ここで補正すると統括表の誤読を隠蔽してしまうため、原本を保つ）。
+    // 警告の発火順序：
+    //   1) low_confidence — 統括表セルの読み取り信頼度が低い箇所を最初に表面化
+    //   2) detectDiscrepancies — 数値差分・読み落とし・二重記録の検出
+    //   detectDiscrepancies は low_confidence の typeKey を内部でスキップするため重複警告は出ない。
     const discrepancyWarnings = [
+      ...detectLowConfidenceWarnings(geminiResult.table_wire_totals, '配線'),
+      ...detectLowConfidenceWarnings(geminiResult.table_conduit_totals, '配管'),
       ...detectDiscrepancies(geminiResult.table_wire_totals, wireTotals, '配線', fa),
       ...detectDiscrepancies(geminiResult.table_conduit_totals, conduitTotals, '配管', fa),
     ];

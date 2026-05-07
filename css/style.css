@@ -1318,6 +1318,14 @@ details[open] > .guide-toggle::before {
   color: #92400e;
 }
 
+/* G6: 統括表 confidence='low' / 'unreadable' を伝える警告バッジ。
+   missing_in_* よりも「読み取り段階での不確実性」を直接示す severity。
+   icon 🔍 と組み合わせて青系の冷静なトーンで表示し、ユーザーに調査を促す。 */
+.discrepancy-badge.sev-low_confidence {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
 .discrepancy-msg {
   flex: 1;
 }
@@ -1449,6 +1457,101 @@ details[open] > .guide-toggle::before {
   background: var(--success-bg);
   color: var(--success);
   border: 1px solid var(--success-border);
+}
+
+/* G3: 「ほぼ一致」(差 ≤1m AND ≤5%) — 完全一致と差異あり の中間。
+   exact match より広く discrepancyWarnings の閾値より狭い帯を可視化する目的。
+   薄い緑（success の弱化版）で「ほぼ問題ないが厳密一致ではない」を示す。 */
+.near-match-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #6ee7b7;
+}
+
+/* G3: 全値 0 を伝える「データなし」バッジ。
+   従来は 0=0 で「一致」が表示されていた silent-failure を撲滅するための情報的badge。
+   グレー系で「判定不能」を示し、ユーザーの誤解（=合格と誤認）を防ぐ。 */
+.nodata-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  border: 1px solid var(--gray-300);
+}
+
+/* G3 + G6: 統括表 confidence が low/unreadable のときに表示される「要確認」系バッジ。
+   match/diff 判定を抑制し、「一致でも差異でもない、まず原本確認が必要」を示す。
+   青系で警告というより調査依頼のトーンを採用。 */
+.review-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #93c5fd;
+}
+
+/* G7: 統括表セルの confidence='low' 視覚化。
+   薄い黄色背景で「読めたが信頼度が低い」を示す。値の右に '?' マーカーを併記。 */
+.compare-table .num-cell.conf-low {
+  background: #fef3c7;
+  position: relative;
+}
+
+/* G7: 統括表セルの confidence='unreadable' 視覚化。
+   グレーアウト + 値の代わりに '?' を中央表示。完全に読み取れていないことを強調。 */
+.compare-table .num-cell.conf-unreadable {
+  background: var(--gray-100);
+  color: var(--gray-500);
+  font-style: italic;
+}
+
+/* low confidence の '?' マーカー（値の右側に小さく表示）。
+   ホバーで「信頼度低」のツールチップが出る（title 属性）。 */
+.conf-low-marker {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #b45309;
+  background: #fffbeb;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid #fbbf24;
+  cursor: help;
+}
+
+/* unreadable セルの '?' 表示（中央寄せの大きめ）。 */
+.conf-unread-marker {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gray-500);
+  cursor: help;
+}
+
+/* 統括表セルに併記する「ページ番号タグ」（例: p.2）。
+   マルチページ統括表で「どのページの行か」を即視認できるようにする補助情報。 */
+.conf-page-tag {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gray-600);
+  background: var(--gray-100);
+  padding: 0 4px;
+  border-radius: 3px;
+  vertical-align: middle;
 }
 
 .anno-table {

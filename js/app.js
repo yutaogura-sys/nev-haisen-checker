@@ -894,11 +894,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const iconFor = sev => {
-      if (sev === 'missing_in_counted') return '&#9888;';   // ⚠
-      if (sev === 'missing_in_table')   return '&#10067;';  // ❓
-      return '&#128202;';                                    // 📊
+      if (sev === 'low_confidence')     return '&#128269;';  // 🔍 (虫眼鏡 — 要確認)
+      if (sev === 'missing_in_counted') return '&#9888;';    // ⚠
+      if (sev === 'missing_in_table')   return '&#10067;';   // ❓
+      return '&#128202;';                                     // 📊
     };
     const labelFor = sev => {
+      if (sev === 'low_confidence')     return '統括表 信頼度低';
       if (sev === 'missing_in_counted') return '旗上げ欠落疑い';
       if (sev === 'missing_in_table')   return '統括表欠落疑い';
       return '数値乖離';
@@ -960,22 +962,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const hasRough = roughData && roughData.length > 0;
     const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
 
-    // 正規化キー → { displayName, table, counted, drawn, rough }
+    // 正規化キー → { displayName, table, counted, drawn, rough, tableConfidence, tableSourcePage }
     const merged = {};
-    const addSource = (data, field) => {
+    // 統括表側のみ confidence/source_page を保持する（旗上げ・記載線長・ラフ図には現状フィールドがない）。
+    // confidenceField / sourcePageField を渡したソースのみ、それらフィールドが merged に取り込まれる。
+    const addSource = (data, field, confidenceField, sourcePageField) => {
       if (!data) return;
       data.forEach(t => {
         const key = normalizeType(t.type);
         if (!key) return;
         if (!merged[key]) merged[key] = { displayName: t.type };
         merged[key][field] = toNum(t.total_length_m);
+        if (confidenceField && t.confidence) {
+          merged[key][confidenceField] = String(t.confidence).toLowerCase();
+        }
+        if (sourcePageField && t.source_page != null) {
+          merged[key][sourcePageField] = Number(t.source_page) || null;
+        }
         // 表示名は最も長い（情報量が多い）ものを採用
         if (t.type.length > merged[key].displayName.length) {
           merged[key].displayName = t.type;
         }
       });
     };
-    addSource(tableData, 'table');
+    addSource(tableData, 'table', 'tableConfidence', 'tableSourcePage');
     addSource(countedData, 'counted');
     addSource(drawnData, 'drawn');
     if (hasRough) addSource(roughData, 'rough');
@@ -998,19 +1008,36 @@ document.addEventListener('DOMContentLoaded', () => {
     html += '<th class="col-status">判定</th>';
     html += '</tr></thead><tbody>';
 
+    // 一致判定の許容閾値（discrepancyWarnings の 20m/30% より緩く、exact match より広い）
+    // 1m AND 5% 以内なら「ほぼ一致」（情報的badge）として扱い、
+    // それ以上の差は「差異あり」とする。0=0 や全値 0 の silent-failure は別途専用バッジ。
+    const NEAR_MATCH_ABS_M = 1;
+    const NEAR_MATCH_REL   = 0.05;
+
     keys.forEach(key => {
       const row = merged[key];
       const tv = row.table;
       const fv = row.counted;
       const dv = row.drawn;
       const rv = hasRough ? row.rough : undefined;
+      const tConf = row.tableConfidence;          // 'high' | 'medium' | 'low' | 'unreadable' | undefined
+      const tPage = row.tableSourcePage;          // 整数 or null
+      const isLowConf = tConf === 'low' || tConf === 'unreadable';
+      const isUnreadable = tConf === 'unreadable';
 
-      // 全値の一致判定
+      // 全値の有効リスト・一致判定
       const vals = [tv, fv, dv];
       if (hasRough) vals.push(rv);
       const validVals = vals.filter(v => v !== undefined && v !== null);
-      const allMatch = validVals.length >= 2 && validVals.every(v => v === validVals[0]);
-      const hasAnyDiff = validVals.length >= 2 && !allMatch;
+      const allZero = validVals.length >= 1 && validVals.every(v => v === 0);
+      const allMatchExact = validVals.length >= 2 && !allZero && validVals.every(v => v === validVals[0]);
+      // 「ほぼ一致」: 全 valid 値の最大-最小差が NEAR_MATCH_ABS_M 以内 AND 相対差が NEAR_MATCH_REL 以内
+      const min = validVals.length ? Math.min(...validVals) : 0;
+      const max = validVals.length ? Math.max(...validVals) : 0;
+      const absRange = max - min;
+      const relRange = max > 0 ? absRange / max : 0;
+      const allNearMatch = !allMatchExact && validVals.length >= 2 && !allZero
+        && absRange <= NEAR_MATCH_ABS_M && relRange <= NEAR_MATCH_REL;
 
       const fmtVal = v => (v !== undefined && v !== null) ? v + 'm' : '-';
       const diffCell = (val, ref) => {
@@ -1018,16 +1045,47 @@ document.addEventListener('DOMContentLoaded', () => {
         return val !== ref ? ' diff-cell' : '';
       };
 
+      // G7: 統括表セルの視覚化（confidence ベース）
+      // unreadable: '?' を値の代わりに表示
+      // low: 値の右に '?' マーカー + 黄色背景
+      // それ以外: 通常表示
+      let tableCellClass = 'num-cell';
+      let tableCellContent;
+      if (isUnreadable) {
+        tableCellClass += ' conf-unreadable';
+        tableCellContent = '<span class="conf-unread-marker" title="読み取り不能">?</span>';
+      } else if (isLowConf) {
+        tableCellClass += ' conf-low';
+        tableCellContent = `${fmtVal(tv)}<span class="conf-low-marker" title="信頼度低">?</span>`;
+      } else {
+        tableCellContent = fmtVal(tv);
+      }
+      const pageBadge = tPage ? `<span class="conf-page-tag" title="統括表のページ">p.${tPage}</span>` : '';
+
       html += '<tr>';
       html += `<td class="type-cell">${escapeHtml(row.displayName)}</td>`;
-      html += `<td class="num-cell">${fmtVal(tv)}</td>`;
+      html += `<td class="${tableCellClass}">${tableCellContent}${pageBadge}</td>`;
       html += `<td class="num-cell${diffCell(fv, tv)}">${fmtVal(fv)}</td>`;
       html += `<td class="num-cell${diffCell(dv, tv)}">${fmtVal(dv)}</td>`;
       if (hasRough) html += `<td class="num-cell${diffCell(rv, tv)}">${fmtVal(rv)}</td>`;
 
-      if (allMatch) {
+      // G3: 厳格化したバッジロジック（優先順位順）
+      //   1) low confidence: 「要確認」（match/diff 判定を抑制）
+      //   2) 全値 0: 「データなし」（false-一致 撲滅）
+      //   3) 完全一致: 「一致」
+      //   4) ほぼ一致（1m/5% 以内）: 「ほぼ一致」（情報的badge）
+      //   5) 差異あり（既存ロジック）
+      //   6) データ不足（既存）
+      if (isLowConf) {
+        const label = isUnreadable ? '統括表 読み取り不能' : '統括表 信頼度低';
+        html += `<td class="status-cell"><span class="review-badge">${escapeHtml(label)}</span></td>`;
+      } else if (allZero) {
+        html += `<td class="status-cell"><span class="nodata-badge">データなし</span></td>`;
+      } else if (allMatchExact) {
         html += `<td class="status-cell"><span class="match-badge">一致</span></td>`;
-      } else if (hasAnyDiff) {
+      } else if (allNearMatch) {
+        html += `<td class="status-cell"><span class="near-match-badge" title="絶対差${absRange.toFixed(1)}m / 相対差${(relRange*100).toFixed(1)}%">ほぼ一致</span></td>`;
+      } else if (validVals.length >= 2) {
         const diffs = [];
         const diffPair = (label, a, b) => {
           if (a !== undefined && b !== undefined && a !== b) {
@@ -1447,28 +1505,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const s2 = [];
 
     // 比較テーブル生成ヘルパー（セクションごとにラフ図有無を判定）
+    // 【G3 + G7 反映】 renderCompareTable と同じ判定ロジック・confidence 視覚化を Excel にも展開:
+    //   ・統括表セルに confidence 列（high/medium/low/unreadable）を追加表示
+    //   ・統括表ページ列を追加（マルチページ対応）
+    //   ・判定: low confidence → '統括表 信頼度低'、全 0 → 'データなし'、ほぼ一致 → 'ほぼ一致'、それ以外は既存
     const buildCompareSection = (title, tableData, countedData, drawnData, roughData) => {
       const hasR = roughData && roughData.length > 0;
-      const sectionHeaders = ['種別', '①統括表', '②旗上げ合計', '③記載線長'];
+      const sectionHeaders = ['種別', '①統括表', '統括表-信頼度', '統括表-ページ', '②旗上げ合計', '③記載線長'];
       if (hasR) sectionHeaders.push('④ラフ図');
       sectionHeaders.push('判定');
 
       s2.push([title]);
       s2.push(sectionHeaders);
 
+      const NEAR_MATCH_ABS_M_X = 1;
+      const NEAR_MATCH_REL_X   = 0.05;
       const toNum = v => (v === undefined || v === null || v === '') ? undefined : Number(v);
       const merged = {};
-      const addSrc = (data, field) => {
+      const addSrc = (data, field, confField, pageField) => {
         if (!data) return;
         data.forEach(t => {
           const key = normalizeType(t.type);
           if (!key) return;
           if (!merged[key]) merged[key] = { displayName: t.type };
           merged[key][field] = toNum(t.total_length_m);
+          if (confField && t.confidence) merged[key][confField] = String(t.confidence).toLowerCase();
+          if (pageField && t.source_page != null) merged[key][pageField] = Number(t.source_page) || null;
           if (t.type.length > merged[key].displayName.length) merged[key].displayName = t.type;
         });
       };
-      addSrc(tableData, 'table');
+      addSrc(tableData, 'table', 'tableConfidence', 'tableSourcePage');
       addSrc(countedData, 'counted');
       addSrc(drawnData, 'drawn');
       if (hasR) addSrc(roughData, 'rough');
@@ -1479,17 +1545,36 @@ document.addEventListener('DOMContentLoaded', () => {
       Object.keys(merged).forEach(key => {
         const r = merged[key];
         const tv = r.table, fv = r.counted, dv = r.drawn, rv = hasR ? r.rough : undefined;
+        const tConf = r.tableConfidence;
+        const tPage = r.tableSourcePage;
+        const isLowConf = tConf === 'low' || tConf === 'unreadable';
+        const isUnreadable = tConf === 'unreadable';
+
         const vals = [tv, fv, dv];
         if (hasR) vals.push(rv);
         const valid = vals.filter(v => v !== undefined && v !== null);
-        const allMatch = valid.length >= 2 && valid.every(v => v === valid[0]);
+        const allZero = valid.length >= 1 && valid.every(v => v === 0);
+        const allMatchExact = valid.length >= 2 && !allZero && valid.every(v => v === valid[0]);
+        const min = valid.length ? Math.min(...valid) : 0;
+        const max = valid.length ? Math.max(...valid) : 0;
+        const absRange = max - min;
+        const relRange = max > 0 ? absRange / max : 0;
+        const allNearMatch = !allMatchExact && valid.length >= 2 && !allZero
+          && absRange <= NEAR_MATCH_ABS_M_X && relRange <= NEAR_MATCH_REL_X;
 
         let status = '';
-        if (allMatch) status = '一致';
+        if (isLowConf) status = isUnreadable ? '統括表 読み取り不能' : '統括表 信頼度低';
+        else if (allZero) status = 'データなし';
+        else if (allMatchExact) status = '一致';
+        else if (allNearMatch) status = 'ほぼ一致';
         else if (valid.length >= 2) status = '差異あり';
         else status = 'データ不足';
 
-        const row = [r.displayName, tv != null ? tv : '', fv != null ? fv : '', dv != null ? dv : ''];
+        // 統括表セルの値: unreadable は '?'、それ以外は数値
+        const tableCell = isUnreadable ? '?' : (tv != null ? tv : '');
+        const confCell  = tConf || '';
+        const pageCell  = tPage || '';
+        const row = [r.displayName, tableCell, confCell, pageCell, fv != null ? fv : '', dv != null ? dv : ''];
         if (hasR) row.push(rv != null ? rv : '');
         row.push(status);
         s2.push(row);
@@ -1500,8 +1585,18 @@ document.addEventListener('DOMContentLoaded', () => {
     s2.push([]);
     buildCompareSection('【配管 比較】', result.tableConduitTotals, result.countedConduitTotals, result.drawnConduitLengths, state.roughConduitData);
 
+    // 列幅: 種別 / 統括表 / 信頼度 / ページ / 旗上げ合計 / 記載線長 / [ラフ図] / 判定
     const ws2 = XLSX.utils.aoa_to_sheet(s2);
-    ws2['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+    ws2['!cols'] = [
+      { wch: 22 },  // 種別
+      { wch: 10 },  // ①統括表
+      { wch: 12 },  // 統括表-信頼度
+      { wch: 12 },  // 統括表-ページ
+      { wch: 12 },  // ②旗上げ合計
+      { wch: 12 },  // ③記載線長
+      { wch: 10 },  // ④ラフ図 (有無に関わらず確保)
+      { wch: 18 },  // 判定
+    ];
     XLSX.utils.book_append_sheet(wb, ws2, '配線・配管比較');
 
     // ===== シート3: 旗上げ詳細 =====
