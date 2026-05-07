@@ -108,7 +108,7 @@ const DrawingChecker = (() => {
 
     // ── 埋設関連 ──
     { id: 'mc_burial_hatching', category: 'manual_burial', label: '埋設ハッチング色の適合性',
-      description: '埋設区間がある場合、ハッチング色が適切か。アスファルト/コンクリート=赤色ハッチング、土/砂利=緑色ハッチング。該当がない場合はパス', required: false },
+      description: '**新設**埋設区間がある場合のみ、ハッチング色がマニュアル準拠か確認。アスファルト/コンクリート=赤色ハッチング、土/砂利=緑色ハッチング。**既設埋設区間のみの場合（既設配管・既設埋設等）はハッチング不要のため pass**。該当区間が一切ない場合も pass。flagged_annotations の note/method/cable_type に「既設」が含まれる旗上げは既設埋設として扱い、本チェックの対象外。新設埋設区間が存在しない場合に「ハッチングなし」を理由に warn/fail を返してはならない（過剰指摘の典型パターン）', required: false },
     { id: 'mc_burial_conduit_type', category: 'manual_burial', label: '埋設配管種別の適合性',
       description: '埋設配管にFEP管またはPFD管が使用されているか。該当がない場合はパス', required: false },
     { id: 'mc_burial_dimension', category: 'manual_burial', label: '埋設寸法（幅×深さ）の記載',
