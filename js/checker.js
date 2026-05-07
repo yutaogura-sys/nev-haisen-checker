@@ -128,7 +128,7 @@ const DrawingChecker = (() => {
 
     // ── 表記規則 ──
     { id: 'mc_new_existing_prefix', category: 'manual_notation', label: '新設/既設の明確なプレフィックス表記',
-      description: '全ての設備ラベルに「新設」または「既設」のプレフィックスが付いているか。例：「新設プルボックス」「既設分電盤」「新設EV充電設備」等', required: true },
+      description: '全ての設備ラベルに「新設」または「既設」のプレフィックスが付いているか。例：「新設プルボックス」「既設分電盤」「新設EV充電設備」等。判定は段階的に行う ①全設備にプレフィックス → pass、②一部欠落 + 色分けで識別可能（赤=新設、青=既設）→ pass（色分けで意図が明確）、③全設備プレフィックスなし + 色分けあり → warn（識別は機能するがマニュアル推奨表記から外れる）、④全設備プレフィックスなし + 色分けもなし → fail（識別手段なし）。Pass 1 の wire_color_distinction / color_legend_observed を最優先の根拠として参照', required: true },
     { id: 'mc_color_coding', category: 'manual_notation', label: '配線ルートの色分けルール',
       description: '配線ルートの色分けがマニュアル準拠か。期待ルール：新設配線=赤色線、既設配線=青色線、電力会社工事=緑線。判定は段階的に行う ①凡例（記号表）に色分けが定義 + ルート上に色分け視認 → pass、②凡例なしでも2色以上視認 → pass、③凡例ありでも色分け視認できず → warn、④凡例なし + 1色のみ視認 → warn、⑤完全モノクロ（凡例なし・色分け表記なし） → fail。Pass 1 の color_legend_observed / wire_color_distinction を最優先の根拠として参照', required: true },
     { id: 'mc_vvf_exposure', category: 'manual_notation', label: 'VVF外部露出配線の禁止',
@@ -796,11 +796,31 @@ ${manualCheckListText}
 | あり | ページ分離（複数ページで分ける） | **pass** | ページ分離で区別 |
 | あり | 上記いずれもなし | **warn** | 区別が不明確 |
 
+---
+
+### mc_new_existing_prefix（設備ラベルの新設/既設プレフィックス表記）判定マトリクス
+**根拠フィールド**: \`wire_color_distinction\`、\`color_legend_observed\`
+**マニュアル準拠の意図**: 新設・既設を識別可能にすること（プレフィックス表記が標準手段だが、色分けも代替手段として許容される）
+
+| 全設備プレフィックス | 色分け識別（赤=新設 / 青=既設） | status | 理由 |
+|---|---|---|---|
+| 全設備に付与 | - | **pass** | マニュアル明示準拠 |
+| 一部欠落 | 配線色に「赤」または「青」を含む | **pass** | 色分けで識別の意図が明確（プレフィックス重複を省略しただけ） |
+| 全設備で欠落 | 配線色に「赤」または「青」を含む | **warn** | 識別は機能するがマニュアル推奨表記から外れる |
+| 全設備で欠落 | 色分けなし（モノクロ） | **fail** | 識別手段が一切ない |
+| 不明 | - | **warn** | 判定不能 |
+
+**重要な注意事項（過剰指摘抑止）:**
+- **赤色で作図された設備に「新設」プレフィックスがない場合でも、色分けで識別できれば fail にしない**（pass または warn）
+- 実務上、赤=新設・青=既設の慣習が確立しているため、プレフィックスは「冗長表記」として省略されることが多い
+- Pass 1 の \`wire_color_distinction\` に「赤」「青」が記録されている場合、それは事実として識別手段が存在することを意味する
+
 ### 矛盾検出（自己整合性チェック — 必ず実行）
 判定後に以下の矛盾がないか **自己チェック** してください。矛盾があれば再判定:
 - **\`is_color_drawing=true\` なのに mc_color_coding=fail**: 色は観測されているのに色分けなしと判定 → 矛盾
 - **\`hatching_colors_observed\` に色があるのに mc_burial_hatching=fail / mc_cable_protector=fail**: ハッチング色は観測されているのに該当チェック fail → 矛盾
 - **\`wire_color_distinction\` が 2色以上なのに new_existing_distinction=fail**: 色での区別は観測されているのに区別なしと判定 → 矛盾
+- **\`wire_color_distinction\` に「赤」または「青」を含むのに mc_new_existing_prefix=fail**: 色で新設/既設を識別できるのにプレフィックスなしを fail と判定 → 矛盾（過剰指摘）
 
 矛盾を検出した場合は、当該チェックを最低でも warn に抑え、detail に「Pass 1 観測値との矛盾あり、要手動確認」を明記してください。
 
@@ -1609,6 +1629,9 @@ ${manualCheckListText}
   //     ・mc_burial_hatching:        hatching_colors_observed に「赤」「緑」を含む観測あり
   //     ・mc_cable_protector:        hatching_colors_observed に「オレンジ」「橙」を含む観測あり
   //     ・new_existing_distinction:  wire_color_distinction が 2 色以上 OR 凡例あり
+  //     ・mc_new_existing_prefix:    wire_color_distinction に「赤」または「青」を含む（過剰指摘抑止）
+  //                                   赤=新設・青=既設の慣習が確立しているため、プレフィックス省略は
+  //                                   「冗長表記の省略」として許容される。色分けで識別可能なら fail にしない。
   //
   //   降格のみ実装（昇格はしない）:
   //     ・false-fail（誤って不合格にする）を防ぐのが目的
@@ -1708,6 +1731,27 @@ ${manualCheckListText}
       if (obs.length > 0) {
         downgrade(ned, obs.join(' / '));
         downgrades.push({ id: 'new_existing_distinction', reason: obs.join(' / ') });
+      }
+    }
+
+    // ── 5. mc_new_existing_prefix（設備ラベルの新設/既設プレフィックス、Manual 側）──
+    //   過剰指摘抑止: 赤=新設・青=既設の慣習が確立しているため、配線色に「赤」または「青」が
+    //   観測されていればプレフィックス省略は識別意図が明確と判断し、fail を warn に降格する。
+    //   凡例で色分けが定義されている場合も同様（凡例ベースの識別が機能している）。
+    //   降格条件:
+    //     ・wire_color_distinction に「赤」「青」「red」「blue」のいずれかの色名を含む
+    //     ・OR  color_legend_observed に「赤」「青」を含む（凡例ベースの識別）
+    const nep = findResult('mc_new_existing_prefix');
+    if (nep && nep.status === 'fail') {
+      const colorKeywords = ['赤', '青', 'red', 'blue', 'Red', 'Blue', 'RED', 'BLUE'];
+      const matchedColors = wireColors.filter(c => colorKeywords.some(k => c.includes(k)));
+      const legendHasNewExistingColor = colorKeywords.some(k => legend.includes(k));
+      const obs = [];
+      if (matchedColors.length > 0) obs.push(`新設/既設識別色: [${matchedColors.join(', ')}]`);
+      if (legendHasNewExistingColor) obs.push(`凡例に色分け定義: 「${legend}」`);
+      if (obs.length > 0) {
+        downgrade(nep, obs.join(' / '));
+        downgrades.push({ id: 'mc_new_existing_prefix', reason: obs.join(' / ') });
       }
     }
 
