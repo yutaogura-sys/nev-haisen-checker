@@ -94,7 +94,7 @@ const DrawingChecker = (() => {
     { id: 'mc_summary_table', category: 'manual_summary', label: '配線集計表（統括表）の存在',
       description: '図面内に配線集計表（統括表）が表形式で記載されているか。ケーブル種別ごとに全長・内訳（露出/管内/埋設）・配管種別が記載された表', required: true },
     { id: 'mc_summary_order', category: 'manual_summary', label: '統括表の記載順序',
-      description: '統括表の記載が[種別用途][配管種類・口径]の順で、露出配管接続→露出配管→埋設配管の順序になっているか。配管はPFD→HIVE→FEP等の順', required: true },
+      description: '統括表の記載がマニュアル**推奨**順序に従っているのが望ましい（[種別用途][配管種類・口径]の順、露出配管接続→露出配管→埋設配管の順、配管はPFD→HIVE→FEP等の順）。**情報自体の有無は別チェック（mc_summary_table / mc_summary_cable_breakdown）でカバーされる**。本項目は順序のみのスタイル判定であり、必要情報が揃っていれば順序が異なっても fail にせず warn 止まりにすること。任意項目扱い（required: false）', required: false },
     { id: 'mc_summary_cable_breakdown', category: 'manual_summary', label: 'ケーブル種別ごとの全長・内訳',
       description: '各ケーブル種別（CVT○sq、CV○sq-3C等）について、全長と配線方法別内訳（露出/管内/埋設）の長さ(m)が記載されているか', required: true },
 
@@ -829,6 +829,15 @@ ${manualCheckListText}
 - **fail**: 必須項目で要件/ルールを満たしていない場合のみ使用
 - **warn**: 記載はあるが不明瞭、または部分的にしか満たしていない
 - **任意項目（必須: いいえ）のルール**: 該当しない場合は **pass**、該当するが不備がある場合は **warn**（failは使わない）
+
+### 「推奨フォーマット系」項目の取り扱い（過剰指摘抑止）
+スタイル・順序・推奨フォーマットを判定する項目（例: \`mc_summary_order\` 統括表の記載順序）は、
+**情報自体の有無**と**推奨フォーマットへの準拠**を分けて判定してください:
+- 必要情報自体の有無は別チェック（例: mc_summary_table / mc_summary_cable_breakdown）でカバーされている
+- 本系統のチェックは **「推奨形式に従っているか」** のみを見るスタイル判定
+- **必要情報が揃っていれば、推奨形式と異なっていても fail にせず warn 止まり**にすること
+- description に「推奨」「望ましい」と記載されている項目、または required: false の項目は特にこの原則を厳守
+- 「順序が違う」「並びが推奨と異なる」だけで fail を返してはいけない（過剰指摘の典型パターン）
 
 ## 回答フォーマット（厳密にこのJSON形式で返してください）
 **重要: 回答はJSON以外のテキストを含めず、以下のJSON構造のみを返してください。コードフェンス（\`\`\`json ... \`\`\`）で囲んでも構いません。**
