@@ -130,7 +130,7 @@ const DrawingChecker = (() => {
     { id: 'mc_new_existing_prefix', category: 'manual_notation', label: '新設/既設の明確なプレフィックス表記',
       description: '全ての設備ラベルに「新設」または「既設」のプレフィックスが付いているか。例：「新設プルボックス」「既設分電盤」「新設EV充電設備」等', required: true },
     { id: 'mc_color_coding', category: 'manual_notation', label: '配線ルートの色分けルール',
-      description: '配線ルートの色分けがマニュアル準拠か。新設配線=赤色線、既設配線=青色線、電力会社工事=緑線等の区分', required: true },
+      description: '配線ルートの色分けがマニュアル準拠か。期待ルール：新設配線=赤色線、既設配線=青色線、電力会社工事=緑線。判定は段階的に行う ①凡例（記号表）に色分けが定義 + ルート上に色分け視認 → pass、②凡例なしでも2色以上視認 → pass、③凡例ありでも色分け視認できず → warn、④凡例なし + 1色のみ視認 → warn、⑤完全モノクロ（凡例なし・色分け表記なし） → fail。Pass 1 の color_legend_observed / wire_color_distinction を最優先の根拠として参照', required: true },
     { id: 'mc_vvf_exposure', category: 'manual_notation', label: 'VVF外部露出配線の禁止',
       description: 'VVF2mm-2CまたはVVF2mm-3Cが外部（屋外）において露出配線（管なし）で使用されていないか。VVFは屋外では必ず管内配線とする。VVFが使用されていない場合はパス', required: false },
     { id: 'mc_cable_excess_length', category: 'manual_notation', label: 'ケーブル余長の考慮',
@@ -183,6 +183,30 @@ const DrawingChecker = (() => {
 ## 【作業1】図面基本情報の読み取り (detected_info)
 表題欄および図面全体から以下を読み取ってください（見つからない項目は空文字）：
 施設名（設置場所名称）、図面名称（「配線ルート図」等）、工事名、作成者（会社名または個人名）、縮尺、作成日、電線種類（使用されている全ケーブル種別）、配線全長、配線内訳の要約、配線方法一覧（露出/埋設/架空等）、配管種類一覧、電源元（受電盤/分電盤/キュービクル等）、EV充電設備台数、路面状況（アスファルト/コンクリート/土等）、付帯設備（プルボックス/ハンドホール/支柱等）、既設設備情報
+
+### 【作業1-b】配線色の観測（必須・後段の色分け判定の根拠になります）
+配線ルート図は通常、新設配線=赤、既設配線=青、電力会社工事=緑のように色分けされています。
+**完全モノクロの図面は稀です**。「黒に見える線」でも、注意深く確認すると暗い赤・暗い青の場合があります。
+以下を必ず確認して detected_info に記録してください：
+
+1. **凡例（記号表）の確認**
+   - 図面の右下・左下・余白に「凡例」「記号表」「色分け表」等のラベル付き表があるかを確認
+   - 凡例で定義されている色分けルールを文字で書き起こす（例：「赤線=新設配線、青線=既設配線」）
+   - 凡例自体が見つからない場合は空文字
+
+2. **配線ルート上の色観測**
+   - 実際に図面内の配線ルート線（電源元から充電設備への経路を示す線）が何色で描かれているかを観測
+   - 1本でも色付き線（赤・青・緑・橙等）が見える場合、その色名を全て列挙
+   - 配線ルートが完全に黒のみで描かれている場合は空配列
+   - **背景の罫線・表枠・テキストの色は除外**。あくまで「配線ルートを示す線」の色のみ
+
+3. **凡例の所在**
+   - 凡例が見つかった場合、その所在（例：「右下表題欄の下」「左上余白」）を記録
+   - 見つからない場合は空文字
+
+**重要**: この情報は後段の Pass 2 で「mc_color_coding（配線ルートの色分けルール）」判定の主要根拠になります。
+画像のみで色微差を判定するのは Gemini にとって難しいため、Pass 1 でテキスト化することで判定精度を上げます。
+慎重かつ正直に観測してください — 不確実な場合は空配列・空文字を返し、断定しないこと。
 
 ## 【作業2】統括表（配線集計表）の記載値の読み取り
 図面内の統括表（配線集計表）から数値をそのまま読み取ってください。統括表がない場合は空配列 []。
@@ -383,6 +407,9 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
     "surface_material": "路面状況",
     "ancillary_equipment": "付帯設備",
     "existing_equipment_info": "既設設備情報",
+    "color_legend_observed": "凡例に記載されている色分けルールの全文（例: '赤線=新設配線、青線=既設配線、緑線=電力会社工事'）。凡例が見つからない場合は空文字",
+    "wire_color_distinction": ["配線ルート線で実際に観測した色名の配列。例: ['赤', '青']。完全モノクロのみなら空配列 []"],
+    "color_legend_location": "凡例の所在（例: '右下表題欄の下'）。見つからない場合は空文字",
     "page_count_analyzed": "解析ページ数"
   }
 }
@@ -481,6 +508,33 @@ ${nevCheckListText}
 
 ### マニュアルチェック項目
 ${manualCheckListText}
+
+## 【特別注意】mc_color_coding（配線ルートの色分けルール）の判定について
+配線色判定は誤判定が発生しやすいため、以下のフローで慎重に判定してください。
+
+### 判定の手順（必ずこの順序で実行）
+1. **Pass 1 のデータを最優先で参照**:
+   - \`detected_info.color_legend_observed\`: 凡例の文言（空でなければ凡例あり）
+   - \`detected_info.wire_color_distinction\`: 観測された色名の配列
+   - \`detected_info.color_legend_location\`: 凡例の所在
+2. Pass 1 のデータが不十分な場合、図面画像を再確認
+3. 下記の判定マトリクスに従って status を決定
+
+### 判定マトリクス（厳守）
+| 凡例 | 観測色 | status | 理由 |
+|---|---|---|---|
+| あり | 2色以上 | **pass** | マニュアル準拠 |
+| あり | 1色のみ | **pass** | 凡例ベースの色分けは存在 |
+| なし | 2色以上 | **pass** | 凡例なしだが実質的に色分けあり |
+| あり | 0色（モノクロ） | **warn** | 凡例があるのに視認できない（印刷起因の可能性） |
+| なし | 1色のみ | **warn** | 部分的な色分け |
+| なし | 0色（モノクロ） | **fail** | 完全に色分けなし |
+
+### 重要な注意事項
+- 「黒に見える線」でも、注意深く確認すると暗い赤・暗い青の場合があります。**安易にモノクロと断定しない**
+- Pass 1 の \`wire_color_distinction\` に色名が記録されている場合、それは Pass 1 で観測された事実です。fail にする前に必ず再確認してください
+- \`found_text\` には Pass 1 の観測結果（色名・凡例の有無・凡例文言）を必ず引用してください
+- \`detail\` には判定マトリクスのどの行に該当するか（例：「凡例あり + 2色以上視認 → pass」）を明記してください
 
 ## 判定基準
 - **pass**: 要件/ルールを満たしている
@@ -1275,6 +1329,72 @@ ${manualCheckListText}
     return { items, categoryResults, overall, totalPass, totalItems: items.length, requiredPass, requiredTotal: totalRequired.length, requiredFail };
   }
 
+  // ─── 色分け判定の自己矛盾検出（mc_color_coding 専用サニティチェック）──────
+  // 【設計契約 / Pass 1 と Pass 2 の判定整合性を強制】
+  //   背景: Pass 1 の detected_info で色情報（color_legend_observed / wire_color_distinction）を
+  //   観測しているにもかかわらず、Pass 2 が画像のみで「黒線のみ」「白黒図面」と判定して
+  //   mc_color_coding を fail にする false-fail のレビュー報告がある。
+  //
+  //   本関数は Pass 1 と Pass 2 の判定を突き合わせ、矛盾があれば status を warn に降格する：
+  //     ・Pass 1 で凡例ありまたは色1種類以上を観測 ＋ Pass 2 が fail → warn に降格
+  //     ・detail に「Pass 1 観測値と Pass 2 判定の不整合」を明記し、ユーザーに手動確認を促す
+  //
+  //   降格のみ実装（昇格はしない）:
+  //     ・false-fail（誤って不合格にする）を防ぐのが目的
+  //     ・false-pass（本来モノクロなのに pass にする）は別問題で、Pass 1 が fail を返したケース
+  //       なら Pass 2 が pass しても本関数は介入しない（矛盾検出の対象外）
+  //
+  //   【副作用】
+  //     ・geminiResult.manual_results 内の mc_color_coding エントリを直接ミューテートする
+  //       → 後続の aggregateManualResults はミューテート後の値を読む
+  //     ・元のステータスを残すため original_status フィールドを追加（デバッグ・監査用）
+  //
+  //   【戻り値】 { downgraded: boolean, reason: string }（ログ・テレメトリ用途）
+  function applyColorCodingSanityCheck(geminiResult) {
+    const detectedInfo = geminiResult.detected_info || {};
+    const rawResults = geminiResult.manual_results || [];
+
+    const target = rawResults.find(r => r && r.id === 'mc_color_coding');
+    if (!target) {
+      return { downgraded: false, reason: 'mc_color_coding が manual_results に存在しない' };
+    }
+    if (target.status !== 'fail') {
+      return { downgraded: false, reason: `現状の status は ${target.status} なので降格対象外` };
+    }
+
+    // Pass 1 で色観測があったかを判定
+    const legend = (detectedInfo.color_legend_observed || '').trim();
+    const colorsRaw = detectedInfo.wire_color_distinction;
+    const colors = Array.isArray(colorsRaw) ? colorsRaw.filter(c => c && String(c).trim()) : [];
+    const hasLegend = legend.length > 0;
+    const hasColors = colors.length > 0;
+
+    if (!hasLegend && !hasColors) {
+      return { downgraded: false, reason: 'Pass 1 でも色観測なし → fail 判定は妥当' };
+    }
+
+    // 矛盾検出: Pass 1 で色観測ありなのに Pass 2 が fail → warn に降格
+    target.original_status = target.status;
+    target.status = 'warn';
+
+    const observation = [];
+    if (hasLegend) observation.push(`凡例: 「${legend}」`);
+    if (hasColors) observation.push(`観測色: [${colors.join(', ')}]`);
+    const observationText = observation.join(' / ');
+
+    target.detail = (
+      `[自動降格 fail→warn] Pass 1 で色情報を観測（${observationText}）したにもかかわらず、` +
+      `Pass 2 が「色分けなし」と判定したため、判定不整合と見なし warn に降格しました。` +
+      `元の判定理由: ${target.detail || '（詳細なし）'}。` +
+      `お手元の図面で色分けの有無を直接ご確認ください。`
+    );
+
+    return {
+      downgraded: true,
+      reason: `Pass 1 観測 (${observationText}) と Pass 2 fail の矛盾`,
+    };
+  }
+
   // ─── 種別名正規化（キー比較用）──────────────────
   // 【設計契約】本関数はツール全体で使用される「唯一の」種別キー正規化器である。
   //   ・checker.js 内部（detectDiscrepancies / mergeTotals / 旗上げ集計）で使用
@@ -1681,6 +1801,16 @@ ${manualCheckListText}
     //   別キー扱いになり、両方とも missing_in_* として誤警告される。
     //   エラーチェック時は「両側とも同じ正規化済み種別名になっているか」を必ず確認すること。
     applyConduitCorrections(geminiResult);
+
+    // 色分け判定の自己矛盾検出（Pass 1 観測値 vs Pass 2 fail の不整合補正）
+    // 【実行順序】 aggregateManualResults より前で実行する不変条件。
+    //   geminiResult.manual_results を直接ミューテートして status を fail→warn に降格するため、
+    //   降格後の値を aggregateManualResults が読むよう、必ず先に呼ぶ。
+    //   降格は mc_color_coding 1項目のみで他のチェックには影響しない（副作用は局所化）。
+    const colorSanity = applyColorCodingSanityCheck(geminiResult);
+    if (colorSanity.downgraded) {
+      console.warn(`[mc_color_coding 自動降格] ${colorSanity.reason}`);
+    }
 
     const nev = aggregateNevResults(geminiResult, type);
     const manual = aggregateManualResults(geminiResult);
