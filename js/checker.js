@@ -247,6 +247,35 @@ const DrawingChecker = (() => {
 配線ルート上のテキスト注記（「旗上げ」）を**1つ残らず全て**読み取ってください。
 **注記の文字色は複数あります**：新設区間は緑色や赤色、既設区間は青色で記載されます。**色に関係なく全ての旗上げを読み取ってください。**
 
+### 【最重要】数値読み取りの精度確保（桁検証ディシプリン）
+旗上げの length_m は本ツールで最も誤読が発生しやすい箇所です。以下を厳守してください。
+
+**1. 1桁・2桁数値が最も誤読されやすい**
+   配線ルート図には短区間（1m, 3m, 5m, 8m, 13m, 18m 等）が多数存在し、これらは隣接数字との視覚的類似で混同されやすい。
+   **特に注意**: 文字サイズが小さい数値、画像解像度が低い箇所、近接する別の旗上げが視覚的に重なる箇所。
+
+**2. 典型的な誤読パターン（必ず再確認）**
+   - 「3 ↔ 8」（曲線部分の判別が難しい）
+   - 「1 ↔ 7」（縦棒のみの 1 と斜め線がある 7）
+   - 「5 ↔ 6」（下部のループ有無）
+   - 「13 ↔ 18」（下二桁の 3/8 混同）
+   - 「15 ↔ 150」（桁数の見落とし — m 表記の左右の数字を誤認）
+   - 「2 ↔ 20」（同上）
+   - 「4 ↔ 9」（手書きまたは細字の場合）
+
+**3. 数値1つごとに「桁ごとの確認」を実行**
+   - その数値が **1桁か2桁か3桁か** を最初に決める（小数点の有無、m の左に数字が何文字あるか）
+   - 各桁の文字を1つずつ識別する（例: "13m" なら "1" + "3" + "m"）
+   - 隣接する旗上げの length_m と矛盾しないか確認（例: 同じ短い区間で「5m」と「50m」が並んでいたら 10倍違いは要再確認）
+
+**4. ケーブル長と配管長の両方を同等の精度で確認**
+   旗上げ1件には通常 length_m が1つだけ記載されますが、その値は cable_type と conduit_type の両方の長さとして扱われます（共入れの場合の shared_conduit_count による分割は別問題）。
+   **配管側の合計（counted_conduit_totals）も同じ length_m を根拠に算出されるため、cable と conduit を区別して片方だけ慎重に読むのではなく、length_m そのものを慎重に読んでください。**
+
+**5. 確信が持てない場合の振る舞い**
+   ・桁数や数字に確信が持てない場合、note 欄に "数値読み取りに不確実性あり" と明記
+   ・それでも flagged_annotations にはエントリ自体を入れる（読み落としよりは桁誤読の方が後段で検出可能）
+
 例（新設区間 — 緑色テキスト）：
 - 「CV8sq-3C  露出 横引き  13m」
 - 「CV8sq-3C  露出 立上げ  3m」
@@ -265,6 +294,7 @@ const DrawingChecker = (() => {
 2. **配管種別**: E31、PFD-28 等（記載がある場合）
 3. **施工方法**: 露出/埋設/架空 + 横引き/立上げ/立下げ/EV充電設備用分電盤内部配線 等
 4. **距離**: Xm（数値）
+5. **ページ番号 (page)**: その旗上げが描かれているページ番号（1-indexed の整数）。単一ページPDFの場合は常に 1。マルチページPDFの場合は **必ず実際のページ番号を記録**。これにより後段の取りこぼし検出（特定ページの記録ゼロ）と、警告メッセージのページ特定が可能になる
 
 **「+」結合表記の解析（非常に重要）:**
 ケーブル種別が「CV22sq-2C+IV5.5sq」のように「+」で結合されている場合：
@@ -310,6 +340,26 @@ const DrawingChecker = (() => {
 - **立上げ・立下げ** — 配管の垂直部分
 - **配管端部の短い区間** — プルボックス付近等の短い配管区間
 これらの小さな区間を合算すると全体の20〜40%を占めることがあります。
+
+**マルチページ図面の取り扱い（取りこぼし・二重カウント防止）:**
+複数ページにわたる図面では、ページ間の取りこぼしと二重カウントの両方が発生しやすい。以下の手順で読み取ること：
+
+1. **ページごとに独立して旗上げを読み取る**
+   - 各ページの旗上げを page=1, page=2, ... と分けて全件列挙
+   - 合算は行わず、ページ別の生データを揃える段階を最初に終わらせる
+
+2. **ページごとの件数を意識する**
+   - ページ番号別に「このページに何件の旗上げを記録したか」を意識
+   - あるページに極端に少ない（または 0 件の）記録の場合、取りこぼしの強い疑い → 再走査
+   - 例: 5ページ図面で page=1 に 30 件、page=2 以降が各 0 件なら、page 2-5 は要再確認
+
+3. **ページをまたぐ連続区間（重要 — 二重カウント注意）**
+   - ページの端で区切られた配線が次ページに続いている場合、**1 つの旗上げを 2 件として記録しない**
+   - 次ページで同じ旗上げ表示が繰り返されているように見えても、それは見出し的な引用や同区間の補足であり別区間ではないことが多い
+   - 同一ケーブル種別・同一施工方法・同一 length_m の旗上げが連続ページに現れた場合、二重記載の疑いが高い → どちらか 1 件のみを採用し、note に「ページXとページYに同表示」と記録
+
+4. **ページごとの内訳を note に記すと有効**
+   - 例: 同一ケーブル種別が複数ページに散在する場合、note に "page 1 で 12m + page 2 で 8m" のように内訳を残すとデバッグが容易になる（必須ではないが推奨）
 
 **共入れ（共通配管）の読み取り — 旗上げ:**
 - **共入れ区間の特定**: 同一経路に複数ケーブルが並走し、1本の配管を共有している区間
@@ -387,6 +437,7 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
       "method": "施工方法（例: 露出 横引き、露出 立上げ、埋設 横引き 等）",
       "length_m": 数値,
       "shared_conduit_count": 0,
+      "page": "ページ番号（整数, 1-indexed）。単一ページなら 1、マルチページなら実際のページ番号",
       "note": "補足情報（区間の説明等。なければ空文字）"
     }
   ],
@@ -415,14 +466,53 @@ PFD-16、PFD-22、PFD-28、PFD-36、PFD-42、PFD-54、HIVE-28、HIVE-36、HIVE-4
 }
 \`\`\`
 
-## 自己検証（回答前に必ず実行すること）
-1. **旗上げ合計 vs 統括表の照合**: flagged_annotations の length_m をケーブル種別ごとに合算し、table_wire_totals の全長と比較。差異が10%以上ある場合は旗上げの読み直しを行う
-   - 旗上げ > 統括表: 「(Xm×N)」表記の二重記録、「+」結合表記の重複がないか確認
-   - 旗上げ < 統括表: 内配線・余長、ピット内、立上げ・立下げの読み落としがないか確認
-2. **配管合計 vs 統括表の照合**: flagged_annotations の配管種別ごとに length_m÷shared_conduit_count を合計し、table_conduit_totals と比較。特に「+」結合のshared_conduit_countが0のままになっていないか
-3. **「+」結合表記の確認**: 分割した全エントリのshared_conduit_countが結合ケーブル数と一致しているか
-4. **既設区間の確認**: 統括表にFEP管や「既設」がある場合、旗上げからも既設区間を読み取れているか
-5. **区間の網羅性確認**: 電源元からEV充電設備までの全経路が途切れなく繋がっているか`;
+## 自己検証（回答前に必ず実行すること — 抽象的に終わらせず、必ず手を動かして再走査すること）
+
+### 検証1: 旗上げ合計 vs 統括表の照合（ケーブル）
+flagged_annotations の length_m をケーブル種別ごとに合算し、table_wire_totals の全長と比較。
+**再読トリガー（厳しめ・予防的）**: ケーブル種別 X について以下のいずれかを満たす場合は再読を実施
+- **絶対差 ≥ 5m**（後段アプリの警告閾値 20m より早く検出するため）
+- **相対差 ≥ 15%**（後段アプリの警告閾値 30% より早く検出するため）
+
+**再読フロー（必ずこの順序で実行し、結果を本番出力に反映すること）:**
+
+1. **ステップA: 全件列挙** — 図面全体を再走査し、cable_type に X を含む旗上げを **1 件残らず** 抽出
+2. **ステップB: 桁ごとの再確認** — 各旗上げの length_m について
+   - 桁数を改めて確認（1桁か 2 桁か 3 桁か）
+   - 各桁の文字を 1 つずつ識別（特に 3↔8、1↔7、5↔6、4↔9、15↔150、2↔20）
+   - 文字サイズが小さい数値・近接する別表示と重なる箇所は特に慎重に
+3. **ステップC: 表記パターン誤読の検出** — 以下の二重カウント / 不足を排除
+   - 「(Xm×N)」表記: パターン①（Xm 明記）なら X、パターン②（X なし）なら Y×N
+   - 「+」結合: 各エントリの shared_conduit_count が結合数と一致
+4. **ステップD: マルチページ取りこぼしの検出**（複数ページの場合）
+   - ページ番号別の件数を確認し、極端に少ない/0 件のページがあれば再走査
+   - 連続ページにわたる同一表示は 1 件として記録（二重カウント排除）
+5. **ステップE: 修正の確定反映** — 再読で発見した誤りを **flagged_annotations の本体に上書き**（思考だけで終わらせず、実際に出力に反映）
+
+**差異の方向別の典型パターン:**
+- 旗上げ > 統括表: 「(Xm×N)」表記の二重記録、「+」結合表記の重複、マルチページ二重記載
+- 旗上げ < 統括表: 内配線・余長、ピット内、立上げ・立下げの読み落とし、特定ページの取りこぼし
+
+### 検証2: 旗上げ合計 vs 統括表の照合（配管）
+flagged_annotations の配管種別ごとに「length_m ÷ shared_conduit_count」（共入れの場合）または「length_m」（単独配管）を合計し、table_conduit_totals と比較。
+再読トリガーと再読フローは検証1と同じ。**特に「+」結合の shared_conduit_count が 0 のままになっていないか必ず確認**。
+
+### 検証3: 「+」結合表記の整合性
+「+」で結合された全エントリの shared_conduit_count が結合ケーブル数と一致するか確認。
+不一致があれば **必ず修正** して出力。
+
+### 検証4: 既設区間の確認
+統括表に FEP 管や「既設」記載がある場合、旗上げ側にも既設区間が記録されているか確認。
+青色テキストの旗上げを見落としていないか再確認。
+
+### 検証5: 区間の網羅性
+電源元（受電盤・分電盤・キュービクル等）から EV 充電設備までの全経路が、旗上げの集合で途切れなく繋がっているか確認。
+特定ページに記録が偏っていないかも併せて確認（マルチページ図面では特に重要）。
+
+### 検証6: ページ番号の整合性（マルチページのみ）
+flagged_annotations の各エントリに page フィールドが正しく設定されているか確認。
+**page=0 や空欄、明らかに範囲外の値（解析ページ数を超える）がないか**。
+ある場合は該当旗上げの位置を再確認して修正。`;
   }
 
   // ─── Pass 2 プロンプト（NeV・マニュアル判定特化）──────
@@ -1599,9 +1689,11 @@ ${manualCheckListText}
   //   1. 本関数は既存の数値（table_*_totals / counted_*_totals）を改変しない（副作用なし）
   //   2. 入力は必ず applyConduitCorrections 後の状態であること
   //      （種別名の正規化が揃っていないと missing_in_* が誤検出される）
-  //   3. 戻り値の warning は { kind, type, severity, tableValue, countedValue, message } 形を満たす
+  //   3. 戻り値の warning は { kind, type, severity, tableValue, countedValue, message, hint } 形を満たす
+  //      hint は annotations が渡された場合に組み立てられる説明文（オプション、空文字許容）
   //   4. severity は 'diff' | 'missing_in_counted' | 'missing_in_table' のいずれか
   //   5. 同一 severity・同一 type の重複は normalizeKey による同一キー化で自然に排除される
+  //   6. annotations 引数は読み取り専用。hint 生成のためだけに参照する
   //
   // 【判定ロジック】
   //   ・両方に存在 → |差| >= ABS_THRESHOLD_M かつ 相対差 >= REL_THRESHOLD の両方を満たす場合のみ警告
@@ -1623,7 +1715,69 @@ ${manualCheckListText}
   const ABS_THRESHOLD_M = 20;    // 20m以上の差で警告候補（桁違い誤読の確実検出）
   const REL_THRESHOLD   = 0.30;  // 30%以上の差で警告候補（集計ミスの典型差）
 
-  function detectDiscrepancies(tableTotals, countedTotals, kindLabel) {
+  // ─── 警告メッセージ用の hint 生成 ───────────────────
+  // 【目的】
+  //   detectDiscrepancies の警告に「ユーザーが原因切り分けに使えるヒント」を付与。
+  //   message は事実（数値の差異）のみを表記し、hint は推測ベースの調査ガイドとして分離。
+  //
+  // 【生成ロジック】
+  //   1) 該当種別の旗上げを抽出（ケーブル種別 or 配管種別の typeKey 一致）
+  //   2) 1〜2 桁の小さい数値が含まれていれば「Gemini 誤読の可能性」を提示
+  //   3) ページ番号が複数 / 不在ならマルチページ取りこぼし示唆
+  //   4) severity 別の典型原因（読み落とし / 二重カウント等）を提示
+  //
+  // 【副作用なし】 annotations / 既存の警告は不変。
+  function buildDiscrepancyHint(typeKey, severity, annotations, kindLabel) {
+    const isWire = kindLabel === '配線';
+    const related = (annotations || []).filter(a => {
+      const tk = normalizeKey(isWire ? a.cable_type : a.conduit_type);
+      return tk && tk === typeKey;
+    });
+
+    const hints = [];
+
+    // 1〜2 桁数値（< 5m）の存在確認 — Gemini 誤読の典型対象
+    const smallNumberCount = related.filter(a => {
+      const v = Number(a.length_m) || 0;
+      return v > 0 && v < 5;
+    }).length;
+    if (smallNumberCount > 0) {
+      hints.push(
+        `小さい数値（5m未満）の旗上げが ${smallNumberCount} 件含まれます。` +
+        `Gemini は 1〜2 桁の数値（3↔8、1↔7、13↔18 等）を誤読する傾向があるため、該当区間の手動確認を推奨します。`
+      );
+    }
+
+    // ページ分布 — マルチページ取りこぼし検出のヒント
+    const pageSet = new Set();
+    let missingPageCount = 0;
+    related.forEach(a => {
+      const p = Number(a.page) || 0;
+      if (p > 0) pageSet.add(p);
+      else missingPageCount++;
+    });
+    if (pageSet.size >= 2) {
+      const sorted = [...pageSet].sort((x, y) => x - y);
+      hints.push(`該当旗上げの所在ページ: ${sorted.join(', ')}。これらのページの旗上げを優先的に再確認してください。`);
+    } else if (pageSet.size === 1) {
+      hints.push(`該当旗上げは page ${[...pageSet][0]} に集中しています。他ページに同種別の旗上げが取りこぼされていないか確認してください。`);
+    } else if (missingPageCount > 0 && related.length > 0) {
+      hints.push(`該当旗上げ ${related.length} 件にページ情報が記録されていません。マルチページ図面の場合、ページ取りこぼしの可能性があります。`);
+    }
+
+    // severity 別の典型原因
+    if (severity === 'missing_in_counted') {
+      hints.push(`旗上げ側の読み落とし候補: 内配線・余長、ピット内、立上げ・立下げ、配管端部の短区間。`);
+    } else if (severity === 'missing_in_table') {
+      hints.push(`原因候補: ① 統括表側の読み落とし、② 旗上げの二重記録（(Xm×N) 表記、+ 結合表記、マルチページ二重記載）。`);
+    } else if (severity === 'diff') {
+      hints.push(`原因候補: 旗上げの桁誤読、(Xm×N) 表記の解釈ミス、共入れ配管の shared_conduit_count 設定漏れ。`);
+    }
+
+    return hints.join(' ');
+  }
+
+  function detectDiscrepancies(tableTotals, countedTotals, kindLabel, annotations) {
     const warnings = [];
     const tableMap = {};
     const countedMap = {};
@@ -1662,6 +1816,7 @@ ${manualCheckListText}
             tableValue: 0,
             countedValue: c.value,
             message: `${kindLabel}「${c.type || t.type}」: 旗上げから${c.value}m検出されたが統括表に記載なし（統括表側の読み落とし疑い）`,
+            hint: buildDiscrepancyHint(k, 'missing_in_table', annotations, kindLabel),
           });
           return;
         }
@@ -1675,6 +1830,7 @@ ${manualCheckListText}
             tableValue: t.value,
             countedValue: 0,
             message: `${kindLabel}「${t.type || c.type}」: 統括表に${t.value}m記載ありだが旗上げから検出されず（読み落とし疑い）`,
+            hint: buildDiscrepancyHint(k, 'missing_in_counted', annotations, kindLabel),
           });
           return;
         }
@@ -1692,6 +1848,7 @@ ${manualCheckListText}
             diff: Math.round(diff * 10) / 10,
             rel: Math.round(rel * 100),
             message: `${kindLabel}「${t.type}」: 統括表${t.value}m vs 旗上げ合計${c.value}m（差${Math.round(diff*10)/10}m・${Math.round(rel*100)}%）`,
+            hint: buildDiscrepancyHint(k, 'diff', annotations, kindLabel),
           });
         }
       }
@@ -1704,6 +1861,7 @@ ${manualCheckListText}
           tableValue: t.value,
           countedValue: 0,
           message: `${kindLabel}「${t.type}」: 統括表に${t.value}m記載ありだが旗上げから検出されず（読み落とし疑い）`,
+          hint: buildDiscrepancyHint(k, 'missing_in_counted', annotations, kindLabel),
         });
       }
       // 旗上げにあるが統括表に出てこない → 統括表誤読または統括表欠落
@@ -1715,6 +1873,7 @@ ${manualCheckListText}
           tableValue: 0,
           countedValue: c.value,
           message: `${kindLabel}「${c.type}」: 旗上げから${c.value}m検出されたが統括表に記載なし（統括表側の読み落とし疑い）`,
+          hint: buildDiscrepancyHint(k, 'missing_in_table', annotations, kindLabel),
         });
       }
     });
@@ -1831,8 +1990,8 @@ ${manualCheckListText}
     // table 側は Gemini 読み取りそのまま（統括表が「事実」として存在する以上、
     // ここで補正すると統括表の誤読を隠蔽してしまうため、原本を保つ）。
     const discrepancyWarnings = [
-      ...detectDiscrepancies(geminiResult.table_wire_totals, wireTotals, '配線'),
-      ...detectDiscrepancies(geminiResult.table_conduit_totals, conduitTotals, '配管'),
+      ...detectDiscrepancies(geminiResult.table_wire_totals, wireTotals, '配線', fa),
+      ...detectDiscrepancies(geminiResult.table_conduit_totals, conduitTotals, '配管', fa),
     ];
 
     // 配管共入れパターン解析（app.js が比較テーブルで「共入れ由来の可能性」を識別する材料）

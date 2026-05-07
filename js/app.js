@@ -914,6 +914,12 @@ document.addEventListener('DOMContentLoaded', () => {
       html += '<li class="discrepancy-item">';
       html += `<span class="discrepancy-badge sev-${escapeHtml(w.severity)}">${iconFor(w.severity)} ${escapeHtml(labelFor(w.severity))}</span>`;
       html += `<span class="discrepancy-msg">${escapeHtml(w.message)}</span>`;
+      // hint は checker.js の buildDiscrepancyHint() が組み立てる調査ガイド文。
+      // message（事実）と分離して表示することで、ユーザーが原因切り分けに使える情報を視認しやすくする。
+      // hint が空文字または未設定の場合は描画スキップ（旧バージョン互換）。
+      if (w.hint && String(w.hint).trim()) {
+        html += `<span class="discrepancy-hint">&#128161; ${escapeHtml(w.hint)}</span>`;
+      }
       html += '</li>';
     });
     html += '</ul>';

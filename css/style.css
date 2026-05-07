@@ -1322,6 +1322,22 @@ details[open] > .guide-toggle::before {
   flex: 1;
 }
 
+/* 信頼度警告に付与される調査ガイドヒント。
+   message（事実）の下に展開され、ユーザーが原因切り分け（Gemini 桁誤読 / マルチページ取りこぼし / 共入れ）の
+   どれを疑うべきかを示す。flex-basis:100% で next-row に折り返し、視覚的に message と分離する。 */
+.discrepancy-hint {
+  flex-basis: 100%;
+  margin-left: 8px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--gray-700);
+  background: #fffbeb;
+  border-left: 3px solid #f59e0b;
+  padding: 6px 10px;
+  border-radius: 4px;
+  line-height: 1.5;
+}
+
 .totals-group {
   margin-bottom: 20px;
 }
